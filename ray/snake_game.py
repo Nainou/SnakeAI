@@ -20,6 +20,7 @@ class SnakeGameRL:
         self.grid_size = grid_size
         self.display = display
         self.render_delay = render_delay
+        self.last_food_step = 0  # Track steps since last food eaten
 
         # Display setup
         if self.display:
@@ -197,7 +198,8 @@ class SnakeGameRL:
         # Check food collision
         if new_head == self.food_position:
             self.score += 1
-            reward = 20  # Big reward for eating food
+            self.last_food_step = self.steps  # Reset food step counter
+            reward = 30  # Big reward for eating food
 
             # Place new food
             self.food_position = self._place_food()
@@ -215,13 +217,19 @@ class SnakeGameRL:
             if new_distance < self.distance_to_food:
                 reward = 1  # Getting closer to food
             elif new_distance > self.distance_to_food:
-                reward = -1  # Getting farther from food
+                reward = -3  # Getting farther from food
             self.distance_to_food = new_distance
 
         # Check if exceeded max steps (to prevent infinite loops)
         if self.steps >= self.max_steps:
             self.done = True
             reward = -10  # Penalty for taking too long
+
+        if self.steps - self.last_food_step >= 100:
+            self.done = True
+            reward = -100
+
+        reward -= 0.01
 
         return self.get_state(), reward, self.done, {'score': self.score}
 

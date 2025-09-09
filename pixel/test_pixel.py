@@ -1,6 +1,6 @@
 import pygame
 import sys
-from pixel.snakeAI_pixel import DQNAgent
+from snakeAI_pixel import DQNAgent
 import numpy as np
 
 def test_agent(agent, num_games=10, display=True):
@@ -43,5 +43,5 @@ def test_agent(agent, num_games=10, display=True):
 
 if __name__ == "__main__":
     agent = DQNAgent(state_size=200, action_size=3)
-    agent.load("pixel/saved/snake_model_episode_pixel_400.pth")
+    agent.load("pixel/saved/snake_model_episode_pixel_600.pth")
     test_agent(agent, num_games=5, display=True)

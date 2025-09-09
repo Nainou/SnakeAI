@@ -1,10 +1,10 @@
 import pygame
 import sys
-from ray.snakeAI import DQNAgent
+from snakeAI import DQNAgent
 import numpy as np
 
 def test_agent(agent, num_games=10, display=True):
-    from ray.snake_game import SnakeGameRL
+    from snake_game import SnakeGameRL
 
     game = SnakeGameRL(grid_size=10, display=display, render_delay=30)
     agent.epsilon = 0  # No exploration during testing
@@ -43,5 +43,8 @@ def test_agent(agent, num_games=10, display=True):
 
 if __name__ == "__main__":
     agent = DQNAgent(state_size=17, action_size=3)
-    agent.load("snake_model_final.pth")
-    test_agent(agent, num_games=5, display=True)
+    try:
+        agent.load("snake_model_final.pth")
+        test_agent(agent, num_games=5, display=True)
+    except Exception as e:
+        print(f"Error loading model: {e}")

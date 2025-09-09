@@ -8,7 +8,7 @@ from collections import deque
 import matplotlib.pyplot as plt
 
 class DQN(nn.Module):
-    def __init__(self, input_size=17, hidden_size=256, output_size=3):
+    def __init__(self, input_size=17, hidden_size=128, output_size=3):
         """
         Deep Q-Network for Snake Game
         Input: State vector of size 17
@@ -38,14 +38,14 @@ class DQNAgent:
         self.memory = deque(maxlen=100000)
         self.epsilon = 1.0  # exploration rate
         self.epsilon_min = 0.01
-        self.epsilon_decay = 0.995
+        self.epsilon_decay = 0.9995
         self.learning_rate = lr
         self.gamma = 0.95  # discount factor
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Neural networks
-        self.q_network = DQN(state_size, 256, action_size).to(self.device)
-        self.target_network = DQN(state_size, 256, action_size).to(self.device)
+        self.q_network = DQN(state_size, 128, action_size).to(self.device)
+        self.target_network = DQN(state_size, 128, action_size).to(self.device)
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=lr)
 
         # Update target network
@@ -122,7 +122,7 @@ class DQNAgent:
 
 def train_agent(episodes=1000, batch_size=32, update_target_every=10):
     # Import the game (assuming it's in a file called snake_game.py)
-    from ray.snake_game import SnakeGameRL
+    from snake_game import SnakeGameRL
 
     # Initialize game and agent
     game = SnakeGameRL(grid_size=10, display=False)
@@ -175,7 +175,7 @@ def train_agent(episodes=1000, batch_size=32, update_target_every=10):
     return agent, scores
 
 def test_agent(agent, num_games=10, display=True):
-    from ray.snake_game import SnakeGameRL
+    from snake_game import SnakeGameRL
 
     game = SnakeGameRL(grid_size=10, display=display, render_delay=5)
     agent.epsilon = 0  # No exploration during testing
@@ -239,7 +239,7 @@ if __name__ == "__main__":
     print("=" * 50)
 
     # Train the agent
-    agent, training_scores = train_agent(episodes=2000, batch_size=32)
+    agent, training_scores = train_agent(episodes=2000, batch_size=64)
 
     # Save the final model
     agent.save('snake_model_final.pth')

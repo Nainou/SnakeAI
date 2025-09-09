@@ -167,14 +167,14 @@ class SnakeGameRL:
         if new_head == self.food_position:
             self.score += 1
             self.last_food_step = self.steps  # Reset food step counter
-            reward = 20  # Big reward for eating food
+            reward = 30  # Big reward for eating food
 
             # Place new food
             self.food_position = self._place_food()
             if self.food_position is None:  # Won the game
                 self.done = True
                 self.won = True
-                reward = 50  # Huge bonus for winning
+                reward = 100  # Huge bonus for winning
                 return self.get_state(), reward, True, {'score': self.score, 'won': True}
         else:
             # Remove tail if no food eaten
@@ -183,9 +183,9 @@ class SnakeGameRL:
             # Small reward/penalty based on distance to food
             new_distance = self._calculate_distance_to_food()
             if new_distance < self.distance_to_food:
-                reward = 5  # Getting closer to food
+                reward = 1  # Getting closer to food
             elif new_distance > self.distance_to_food:
-                reward = -2  # Getting farther from food
+                reward = -3  # Getting farther from food
             self.distance_to_food = new_distance
 
         # Check if exceeded max steps (to prevent infinite loops)
@@ -196,6 +196,8 @@ class SnakeGameRL:
         if self.steps - self.last_food_step >= 100:
             self.done = True
             reward = -100  # Big penalty for not eating
+
+        reward -= 0.1
 
         return self.get_state(), reward, self.done, {'score': self.score}
 
