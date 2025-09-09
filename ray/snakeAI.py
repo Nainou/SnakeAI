@@ -122,7 +122,7 @@ class DQNAgent:
 
 def train_agent(episodes=1000, batch_size=32, update_target_every=10):
     # Import the game (assuming it's in a file called snake_game.py)
-    from snake_game import SnakeGameRL
+    from ray.snake_game import SnakeGameRL
 
     # Initialize game and agent
     game = SnakeGameRL(grid_size=10, display=False)
@@ -175,7 +175,7 @@ def train_agent(episodes=1000, batch_size=32, update_target_every=10):
     return agent, scores
 
 def test_agent(agent, num_games=10, display=True):
-    from snake_game import SnakeGameRL
+    from ray.snake_game import SnakeGameRL
 
     game = SnakeGameRL(grid_size=10, display=display, render_delay=5)
     agent.epsilon = 0  # No exploration during testing

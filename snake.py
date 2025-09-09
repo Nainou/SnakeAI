@@ -68,8 +68,6 @@ FPS = 6
 snake = Snake()
 food = Food(random.randint(0, grid_size-1), random.randint(0, grid_size-1))
 
-#outputgrid=
-
 def main():
     running = True
     while running:
