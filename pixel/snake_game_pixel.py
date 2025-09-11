@@ -4,6 +4,7 @@ import random
 from enum import Enum
 from collections import deque
 import math
+import torch
 
 class Direction(Enum):
     UP = (0, -1)
@@ -45,7 +46,8 @@ class SnakeGameRL:
 
     def reset(self):
         # Snake initialization
-        self.snake_positions = deque([(self.grid_size // 2, self.grid_size // 2)])
+        initial_positions = [(self.grid_size // 2, self.grid_size // 2), (self.grid_size // 2 - 1, self.grid_size // 2), (self.grid_size // 2 - 2, self.grid_size // 2)]
+        self.snake_positions = deque(initial_positions)
         self.direction = Direction.RIGHT
 
         # Food initialization
@@ -79,33 +81,41 @@ class SnakeGameRL:
         return abs(head[0] - self.food_position[0]) + abs(head[1] - self.food_position[1])
 
     def get_state(self):
-        """Return a grid representation of the game state"""
-        grid = np.zeros((self.grid_size, self.grid_size), dtype=int)
+        """Return a grid representations of the game state"""
+        H = W = self.grid_size
+
+        grid_snake_head = torch.zeros((H, W), dtype=torch.float32)
+        grid_snake_body = torch.zeros((H, W), dtype=torch.float32)
+        grid_food_position = torch.zeros((H, W), dtype=torch.float32)
+        grid_wall = torch.zeros((H, W), dtype=torch.float32)
 
         # Mark snake positions
-        for pos in self.snake_positions:
-            grid[pos[1], pos[0]] = 1
+        for x, y in list(self.snake_positions)[1:]:
+            grid_snake_body[y, x] = 1.0
 
         # Mark snake head
-        for head in [self.snake_positions[0]]:
-            grid[head[1], head[0]] = 3
+        grid_snake_head[self.snake_positions[0][1], self.snake_positions[0][0]] = 1
 
         # Mark food position
         if self.food_position:
-            grid[self.food_position[1], self.food_position[0]] = 2
+            fx, fy = self.food_position
+            grid_food_position[fy, fx] = 1.0
 
-        vectorized_grid = grid.flatten() # 100
+        # Walls as a border (helps look-ahead)
+        grid_wall[0, :]  = 1.0
+        grid_wall[-1, :] = 1.0
+        grid_wall[:, 0]  = 1.0
+        grid_wall[:, -1] = 1.0
 
-        # combine the previous state and current state
-        combined_state = np.zeros(200, dtype=int)
-        combined_state[:100] = vectorized_grid
-        if self.old_state is not None:
-            combined_state[100:] = self.old_state
-        else:
-            combined_state[100:] = vectorized_grid
+        # Stack maps together for conv2d layer.
+        state_maps = torch.stack([grid_snake_head, grid_snake_body, grid_food_position, grid_wall], dim=0)
 
-        self.old_state = vectorized_grid
-        return combined_state
+        # get direction encoding for network
+        idx = Direction.get_index(self.direction)
+        dir_onehot = torch.zeros(4, dtype=torch.float32)
+        dir_onehot[idx] = 1.0
+
+        return (state_maps, dir_onehot)
 
     def get_action_from_direction(self, new_direction):
         """Convert absolute direction to relative action (straight, left, right)"""
