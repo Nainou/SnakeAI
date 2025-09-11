@@ -21,7 +21,6 @@ class SnakeGameRL:
         self.grid_size = grid_size
         self.display = display
         self.render_delay = render_delay
-        self.old_state = None
         self.last_food_step = 0  # Track steps since last food eaten
 
         # Display setup
@@ -46,8 +45,9 @@ class SnakeGameRL:
 
     def reset(self):
         # Snake initialization
-        initial_positions = [(self.grid_size // 2, self.grid_size // 2), (self.grid_size // 2 - 1, self.grid_size // 2), (self.grid_size // 2 - 2, self.grid_size // 2)]
+        initial_positions = [(self.grid_size // 2, self.grid_size // 2), (self.grid_size // 2 - 1, self.grid_size // 2), (self.grid_size // 2 - 2, self.grid_size // 2), (self.grid_size // 2 - 3, self.grid_size // 2)]
         self.snake_positions = deque(initial_positions)
+        self.old_positions = deque(initial_positions)
         self.direction = Direction.RIGHT
 
         # Food initialization
@@ -85,7 +85,9 @@ class SnakeGameRL:
         H = W = self.grid_size
 
         grid_snake_head = torch.zeros((H, W), dtype=torch.float32)
+        grid_snake_head_previous = torch.zeros((H, W), dtype=torch.float32)
         grid_snake_body = torch.zeros((H, W), dtype=torch.float32)
+        grid_snake_body_previous = torch.zeros((H, W), dtype=torch.float32)
         grid_food_position = torch.zeros((H, W), dtype=torch.float32)
         grid_wall = torch.zeros((H, W), dtype=torch.float32)
 
@@ -93,8 +95,13 @@ class SnakeGameRL:
         for x, y in list(self.snake_positions)[1:]:
             grid_snake_body[y, x] = 1.0
 
+        for x, y in list(self.old_positions)[1:]:
+            grid_snake_body_previous[y, x] = 1.0
+
         # Mark snake head
         grid_snake_head[self.snake_positions[0][1], self.snake_positions[0][0]] = 1
+
+        grid_snake_head_previous[self.old_positions[0][1], self.old_positions[0][0]] = 1
 
         # Mark food position
         if self.food_position:
@@ -108,7 +115,7 @@ class SnakeGameRL:
         grid_wall[:, -1] = 1.0
 
         # Stack maps together for conv2d layer.
-        state_maps = torch.stack([grid_snake_head, grid_snake_body, grid_food_position, grid_wall], dim=0)
+        state_maps = torch.stack([grid_snake_head, grid_snake_body, grid_snake_head_previous, grid_snake_body_previous, grid_food_position, grid_wall], dim=0)
 
         # get direction encoding for network
         idx = Direction.get_index(self.direction)
@@ -155,6 +162,7 @@ class SnakeGameRL:
         # action == 0: keep going straight
 
         # Move snake
+        self.old_positions = deque(self.snake_positions)
         head = self.snake_positions[0]
         new_head = (
             head[0] + self.direction.value[0],
@@ -195,7 +203,7 @@ class SnakeGameRL:
             if new_distance < self.distance_to_food:
                 reward = 1  # Getting closer to food
             elif new_distance > self.distance_to_food:
-                reward = -3  # Getting farther from food
+                reward = -1  # Getting farther from food
             self.distance_to_food = new_distance
 
         # Check if exceeded max steps (to prevent infinite loops)

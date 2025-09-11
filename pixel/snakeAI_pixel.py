@@ -8,7 +8,7 @@ from collections import deque
 import matplotlib.pyplot as plt
 
 class ConvQN(nn.Module):
-    def __init__(self, in_channels=4, dir_dim=4, num_actions=3, feat_dim=64, hidden=128):
+    def __init__(self, in_channels=6, dir_dim=4, num_actions=3, feat_dim=64, hidden=128):
         """
         Deep Q-Network for Snake Game
         Input: State vector of size 200
@@ -37,7 +37,7 @@ class ConvQN(nn.Module):
         return q
 
 class DQNAgent:
-    def __init__(self, state_size=200, action_size=3, lr=0.001):
+    def __init__(self, state_size=200, action_size=3, lr=0.01):
         self.state_size = state_size
         self.action_size = action_size
         self.memory = deque(maxlen=100000)
@@ -49,8 +49,8 @@ class DQNAgent:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Neural networks
-        self.q_network = ConvQN(in_channels=4, dir_dim=4, num_actions=action_size).to(self.device)
-        self.target_network = ConvQN(in_channels=4, dir_dim=4, num_actions=action_size).to(self.device)
+        self.q_network = ConvQN(in_channels=6, dir_dim=4, num_actions=action_size).to(self.device)
+        self.target_network = ConvQN(in_channels=6, dir_dim=4, num_actions=action_size).to(self.device)
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=lr)
 
         # Update target network
@@ -182,7 +182,7 @@ def train_agent(episodes=1000, batch_size=32, update_target_every=10):
 
         # Save model periodically
         if episode % 200 == 0 and episode > 0:
-            agent.save(f'pixel/saved/snake_model_episode_pixel_{episode}.pth')
+            agent.save(f'saved/snake_model_episode_pixel_{episode}.pth')
 
     return agent, scores
 
@@ -251,7 +251,7 @@ if __name__ == "__main__":
     print("=" * 50)
 
     # Train the agent
-    agent, training_scores = train_agent(episodes=200, batch_size=128)
+    agent, training_scores = train_agent(episodes=2000, batch_size=128)
 
     # Save the final model
     agent.save('saved/snake_model_pixel_final.pth')
