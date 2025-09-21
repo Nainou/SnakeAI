@@ -7,37 +7,32 @@ import random
 from collections import deque
 import matplotlib.pyplot as plt
 
-class ConvQN(nn.Module):
-    def __init__(self, in_channels=4, dir_dim=4, num_actions=3, feat_dim=64, hidden=128):
+class DQN(nn.Module):
+    def __init__(self, input_size=21, hidden_size=128, output_size=3):
         """
         Deep Q-Network for Snake Game
-        Input: State vector of size 200
+        Input: State vector of size 21
         Output: Q-values for 3 actions (straight, turn right, turn left)
         """
-        super(ConvQN, self).__init__()
-        self.convLayers = nn.Sequential(
-            nn.Conv2d(in_channels, 16, kernel_size=3, padding=1), nn.ReLU(inplace=True),
-            nn.Conv2d(16, 32, kernel_size=3, padding=1), nn.ReLU(inplace=True),
-            nn.Conv2d(32, feat_dim, kernel_size=3, padding=1), nn.ReLU(inplace=True),
-        )
-        self.pool = nn.AdaptiveAvgPool2d(1)  # -> [B, feat_dim, 1, 1]
-        self.head = nn.Sequential(
-            nn.Linear(feat_dim + dir_dim, hidden), nn.ReLU(inplace=True),
-            nn.Linear(hidden, num_actions)
-        )
+        super(DQN, self).__init__()
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, hidden_size)
+        self.fc3 = nn.Linear(hidden_size, hidden_size // 2)
+        self.fc4 = nn.Linear(hidden_size // 2, output_size)
 
         # Dropout for regularization
         self.dropout = nn.Dropout(0.1)
 
-    def forward(self, planes, direction):
-        h = self.convLayers(planes)
-        h = self.pool(h).flatten(1)
-        h = torch.cat([h, direction], dim=-1)
-        q = self.head(h)
-        return q
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.dropout(x)
+        x = F.relu(self.fc3(x))
+        x = self.fc4(x)
+        return x
 
 class DQNAgent:
-    def __init__(self, state_size=200, action_size=3, lr=0.001):
+    def __init__(self, state_size=21, action_size=3, lr=0.001):
         self.state_size = state_size
         self.action_size = action_size
         self.memory = deque(maxlen=100000)
@@ -45,12 +40,12 @@ class DQNAgent:
         self.epsilon_min = 0.01
         self.epsilon_decay = 0.9995
         self.learning_rate = lr
-        self.gamma = 0.98  # discount factor
+        self.gamma = 0.95  # discount factor
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Neural networks
-        self.q_network = ConvQN(in_channels=4, dir_dim=4, num_actions=action_size).to(self.device)
-        self.target_network = ConvQN(in_channels=4, dir_dim=4, num_actions=action_size).to(self.device)
+        self.q_network = DQN(state_size, 128, action_size).to(self.device)
+        self.target_network = DQN(state_size, 128, action_size).to(self.device)
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=lr)
 
         # Update target network
@@ -68,19 +63,16 @@ class DQNAgent:
         self.memory.append((state, action, reward, next_state, done))
 
     def act(self, state):
-        # epsilon-greedy
+        """Choose action using epsilon-greedy policy"""
         if random.random() <= self.epsilon:
             return random.randrange(self.action_size)
 
-        planes, direction = state  # each is torch.Tensor on CPU
-        planes = planes.unsqueeze(0).to(self.device)   # [1,C,H,W]
-        direction  = direction.unsqueeze(0).to(self.device)    # [1,4]
-
+        state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
         self.q_network.eval()
         with torch.no_grad():
-            q = self.q_network(planes, direction)
+            q_values = self.q_network(state_tensor)
         self.q_network.train()
-        return int(q.argmax(dim=1).item())
+        return np.argmax(q_values.cpu().data.numpy())
 
     def replay(self, batch_size=32):
         """Train the model on a batch of experiences"""
@@ -88,21 +80,17 @@ class DQNAgent:
             return
 
         batch = random.sample(self.memory, batch_size)
-
-        planes = torch.stack([e[0][0] for e in batch]).to(self.device)
-        directions = torch.stack([e[0][1] for e in batch]).to(self.device)
-        next_planes = torch.stack([e[3][0] for e in batch]).to(self.device)
-        next_directions = torch.stack([e[3][1] for e in batch]).to(self.device)
+        states = torch.FloatTensor([e[0] for e in batch]).to(self.device)
         actions = torch.LongTensor([e[1] for e in batch]).to(self.device)
         rewards = torch.FloatTensor([e[2] for e in batch]).to(self.device)
+        next_states = torch.FloatTensor([e[3] for e in batch]).to(self.device)
         dones = torch.FloatTensor([e[4] for e in batch]).to(self.device)
 
-        current_q_values = self.q_network(planes, directions).gather(1, actions.unsqueeze(1)).squeeze(1)
-        with torch.no_grad():
-            next_q_values = self.target_network(next_planes, next_directions).max(1)[0].detach()
+        current_q_values = self.q_network(states).gather(1, actions.unsqueeze(1))
+        next_q_values = self.target_network(next_states).max(1)[0].detach()
         target_q_values = rewards + (self.gamma * next_q_values * (1 - dones))
 
-        loss = F.mse_loss(current_q_values, target_q_values)
+        loss = F.mse_loss(current_q_values.squeeze(), target_q_values)
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -134,7 +122,7 @@ class DQNAgent:
 
 def train_agent(episodes=1000, batch_size=32, update_target_every=10):
     # Import the game (assuming it's in a file called snake_game.py)
-    from snake_game_pixel import SnakeGameRL
+    from snake_game import SnakeGameRL
 
     # Initialize game and agent
     game = SnakeGameRL(grid_size=10, display=False)
@@ -175,19 +163,19 @@ def train_agent(episodes=1000, batch_size=32, update_target_every=10):
             agent.update_target_network()
 
         # Print progress
-        if episode % 10 == 0:
+        if episode % 100 == 0:
             avg_score = np.mean(scores)
             print(f"Episode {episode}, Average Score: {avg_score:.2f}, "
                   f"Max Score: {max_score}, Epsilon: {agent.epsilon:.3f}")
 
         # Save model periodically
-        if episode % 200 == 0 and episode > 0:
-            agent.save(f'pixel/saved/snake_model_episode_pixel_{episode}.pth')
+        if episode % 500 == 0 and episode > 0:
+            agent.save(f'snake_model_episode_{episode}.pth')
 
     return agent, scores
 
 def test_agent(agent, num_games=10, display=True):
-    from snake_game_pixel import SnakeGameRL
+    from snake_game import SnakeGameRL
 
     game = SnakeGameRL(grid_size=10, display=display, render_delay=5)
     agent.epsilon = 0  # No exploration during testing
@@ -251,11 +239,11 @@ if __name__ == "__main__":
     print("=" * 50)
 
     # Train the agent
-    agent, training_scores = train_agent(episodes=200, batch_size=128)
+    agent, training_scores = train_agent(episodes=2000, batch_size=64)
 
     # Save the final model
-    agent.save('saved/snake_model_pixel_final.pth')
-    print("\nModel saved as 'snake_model_pixel_final.pth'")
+    agent.save('snake_model_final.pth')
+    print("\nModel saved as 'snake_model_final.pth'")
 
     # Plot training progress
     plot_training_progress(list(training_scores))

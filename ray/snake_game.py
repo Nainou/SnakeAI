@@ -53,7 +53,7 @@ class SnakeGameRL:
         # Game state
         self.score = 0
         self.steps = 0
-        self.max_steps = self.grid_size * self.grid_size * 4  # Prevent infinite loops
+        self.max_steps = self.grid_size * self.grid_size * 20  # Prevent infinite loops
         self.done = False
         self.won = False
 
@@ -131,11 +131,41 @@ class SnakeGameRL:
         # Snake length (normalized)
         state.append(len(self.snake_positions) / (self.grid_size * self.grid_size)) # Snake length, 1 value (normalized)
 
+        # Tail end direction (4 values: one-hot encoding)
+        tail_direction_one_hot = [0, 0, 0, 0]
+        if len(self.snake_positions) >= 2:
+            # Calculate direction from second-to-last segment to tail
+            tail = self.snake_positions[-1]
+            second_to_last = self.snake_positions[-2]
+            tail_dx = tail[0] - second_to_last[0]
+            tail_dy = tail[1] - second_to_last[1]
+
+            # Convert to Direction enum
+            if tail_dx == 0 and tail_dy == -1:
+                tail_direction = Direction.UP
+            elif tail_dx == 0 and tail_dy == 1:
+                tail_direction = Direction.DOWN
+            elif tail_dx == -1 and tail_dy == 0:
+                tail_direction = Direction.LEFT
+            elif tail_dx == 1 and tail_dy == 0:
+                tail_direction = Direction.RIGHT
+            else:
+                # Fallback to current direction if unable to determine
+                tail_direction = self.direction
+
+            tail_direction_one_hot[Direction.get_index(tail_direction)] = 1
+        else:
+            # For single segment snake, use current direction
+            tail_direction_one_hot[Direction.get_index(self.direction)] = 1
+
+        state.extend(tail_direction_one_hot) # Tail end direction, 4 values: one-hot encoding
+
         # Food directions, 2 values: x and y direction
         # Current direction, 4 values: one-hot encoding
         # Danger detection, 8 values: straight, left, right, diagonals
         # Distance to food, 2 values: x and y (normalized)
         # Snake length, 1 value (normalized)
+        # Tail end direction, 4 values: one-hot encoding
 
         return np.array(state, dtype=np.float32)
 
@@ -293,7 +323,7 @@ class SnakeGameRL:
 
     def get_state_size(self):
         """Return the size of the state vector"""
-        return 17  # 2 food dir + 4 current dir + 8 dangers + 2 distances + 1 length
+        return 21  # 2 food dir + 4 current dir + 8 dangers + 2 distances + 1 length + 4 tail direction
 
 class SnakeTrainer:
     def __init__(self, grid_size=10):

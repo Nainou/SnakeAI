@@ -56,7 +56,7 @@ class SnakeGameRL:
         # Game state
         self.score = 0
         self.steps = 0
-        self.max_steps = self.grid_size * self.grid_size * 4  # Prevent infinite loops
+        self.max_steps = self.grid_size * self.grid_size * 20  # Allow more steps for learning (2000 for 10x10)
         self.done = False
         self.won = False
 
@@ -193,21 +193,22 @@ class SnakeGameRL:
             # Small reward/penalty based on distance to food
             new_distance = self._calculate_distance_to_food()
             if new_distance < self.distance_to_food:
-                reward = 1  # Getting closer to food
+                reward = 2  # Getting closer to food (increased reward)
             elif new_distance > self.distance_to_food:
-                reward = -3  # Getting farther from food
+                reward = -1  # Getting farther from food (reduced penalty)
             self.distance_to_food = new_distance
 
         # Check if exceeded max steps (to prevent infinite loops)
         if self.steps >= self.max_steps:
             self.done = True
 
-        # if no food is eaten in 100 moves, end the game
-        if self.steps - self.last_food_step >= 100:
+        # Dynamic timeout based on snake length - longer snakes need more time
+        timeout_limit = max(200, len(self.snake_positions) * 10)
+        if self.steps - self.last_food_step >= timeout_limit:
             self.done = True
             reward = -100  # Big penalty for not eating
 
-        reward -= 0.1
+        reward -= 0.01  # Much smaller per-step penalty to allow longer games
 
         return self.get_state(), reward, self.done, {'score': self.score}
 
