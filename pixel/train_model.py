@@ -8,7 +8,7 @@ from collections import deque
 import matplotlib.pyplot as plt
 
 class ConvQN(nn.Module):
-    def __init__(self, in_channels=4, dir_dim=4, num_actions=3, feat_dim=64, hidden=128):
+    def __init__(self, in_channels=5, extra_dim=8, num_actions=3, feat_dim=64, hidden=128):
         """
         Deep Q-Network for Snake Game
         Input: State vector of size 200
@@ -22,7 +22,7 @@ class ConvQN(nn.Module):
         )
         self.pool = nn.AdaptiveAvgPool2d(1)  # -> [B, feat_dim, 1, 1]
         self.head = nn.Sequential(
-            nn.Linear(feat_dim + dir_dim, hidden), nn.ReLU(inplace=True),
+            nn.Linear(feat_dim + extra_dim, hidden), nn.ReLU(inplace=True),
             nn.Linear(hidden, num_actions)
         )
 
@@ -49,8 +49,8 @@ class DQNAgent:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Neural networks
-        self.q_network = ConvQN(in_channels=4, dir_dim=4, num_actions=action_size).to(self.device)
-        self.target_network = ConvQN(in_channels=4, dir_dim=4, num_actions=action_size).to(self.device)
+        self.q_network = ConvQN(in_channels=5, extra_dim=8, num_actions=action_size).to(self.device)
+        self.target_network = ConvQN(in_channels=5, extra_dim=8, num_actions=action_size).to(self.device)
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=lr)
 
         # Update target network

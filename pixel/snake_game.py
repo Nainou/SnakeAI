@@ -85,15 +85,19 @@ class SnakeGameRL:
 
         grid_snake_head = torch.zeros((H, W), dtype=torch.float32)
         grid_snake_body = torch.zeros((H, W), dtype=torch.float32)
+        grid_snake_tail = torch.zeros((H, W), dtype=torch.float32)
         grid_food_position = torch.zeros((H, W), dtype=torch.float32)
         grid_wall = torch.zeros((H, W), dtype=torch.float32)
 
         # Mark snake positions
-        for x, y in list(self.snake_positions)[1:]:
+        for x, y in list(self.snake_positions)[1:-1]:
             grid_snake_body[y, x] = 1.0
 
         # Mark snake head
         grid_snake_head[self.snake_positions[0][1], self.snake_positions[0][0]] = 1
+
+        # Mark snake tail
+        grid_snake_tail[self.snake_positions[-1][1], self.snake_positions[-1][0]] = 1
 
         # Mark food position
         if self.food_position:
@@ -107,14 +111,43 @@ class SnakeGameRL:
         grid_wall[:, -1] = 1.0
 
         # Stack maps together for conv2d layer.
-        state_maps = torch.stack([grid_snake_head, grid_snake_body, grid_food_position, grid_wall], dim=0)
+        state_maps = torch.stack([grid_snake_head, grid_snake_body, grid_snake_tail, grid_food_position, grid_wall], dim=0)
 
         # get direction encoding for network
         idx = Direction.get_index(self.direction)
         dir_onehot = torch.zeros(4, dtype=torch.float32)
         dir_onehot[idx] = 1.0
 
-        return (state_maps, dir_onehot)
+        # Tail end direction (4 values: one-hot encoding)
+        tail_dir_one_hot = torch.zeros(4, dtype=torch.float32)
+        if len(self.snake_positions) >= 2:
+            # Calculate direction from second-to-last segment to tail
+            tail = self.snake_positions[-1]
+            second_to_last = self.snake_positions[-2]
+            tail_dx = tail[0] - second_to_last[0]
+            tail_dy = tail[1] - second_to_last[1]
+
+            # Convert to Direction enum
+            if tail_dx == 0 and tail_dy == -1:
+                tail_direction = Direction.UP
+            elif tail_dx == 0 and tail_dy == 1:
+                tail_direction = Direction.DOWN
+            elif tail_dx == -1 and tail_dy == 0:
+                tail_direction = Direction.LEFT
+            elif tail_dx == 1 and tail_dy == 0:
+                tail_direction = Direction.RIGHT
+            else:
+                # Fallback to current direction if unable to determine
+                tail_direction = self.direction
+
+            tail_dir_one_hot[Direction.get_index(tail_direction)] = 1
+        else:
+            # For single segment snake, use current direction
+            tail_dir_one_hot[Direction.get_index(self.direction)] = 1
+
+        extra_information = torch.cat([dir_onehot, tail_dir_one_hot])
+
+        return (state_maps, extra_information)
 
     def get_action_from_direction(self, new_direction):
         """Convert absolute direction to relative action (straight, left, right)"""
@@ -192,7 +225,7 @@ class SnakeGameRL:
             # Small reward/penalty based on distance to food
             new_distance = self._calculate_distance_to_food()
             if new_distance < self.distance_to_food:
-                reward = 2  # Getting closer to food (increased reward)
+                reward = 1  # Getting closer to food (increased reward)
             elif new_distance > self.distance_to_food:
                 reward = -1  # Getting farther from food
             self.distance_to_food = new_distance
