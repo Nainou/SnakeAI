@@ -1,10 +1,10 @@
 import pygame
 import sys
-from snakeAI_pixel import DQNAgent
+from train_model import DQNAgent
 import numpy as np
 
 def test_agent(agent, num_games=10, display=True):
-    from snake_game_pixel import SnakeGameRL
+    from snake_game import SnakeGameRL
 
     game = SnakeGameRL(grid_size=10, display=display, render_delay=30)
     agent.epsilon = 0  # No exploration during testing

@@ -45,7 +45,7 @@ class DQNAgent:
         self.epsilon_min = 0.01
         self.epsilon_decay = 0.999  # Slower decay to maintain exploration longer
         self.learning_rate = lr
-        self.gamma = 0.99  # Higher discount factor for longer-term thinking
+        self.gamma = 0.98  # Higher discount factor for longer-term thinking
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Neural networks
@@ -134,7 +134,7 @@ class DQNAgent:
 
 def train_agent(episodes=1000, batch_size=32, update_target_every=20):
     # Import the game (assuming it's in a file called snake_game.py)
-    from snake_game_pixel import SnakeGameRL
+    from snake_game import SnakeGameRL
 
     # Initialize game and agent
     game = SnakeGameRL(grid_size=10, display=False)
@@ -187,7 +187,7 @@ def train_agent(episodes=1000, batch_size=32, update_target_every=20):
     return agent, scores
 
 def test_agent(agent, num_games=10, display=True):
-    from snake_game_pixel import SnakeGameRL
+    from snake_game import SnakeGameRL
 
     game = SnakeGameRL(grid_size=10, display=display, render_delay=5)
     agent.epsilon = 0  # No exploration during testing
