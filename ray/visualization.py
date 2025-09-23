@@ -9,10 +9,10 @@ import matplotlib.pyplot as plt
 import pygame
 
 class DQN(nn.Module):
-    def __init__(self, input_size=17, hidden_size=128, output_size=3):
+    def __init__(self, input_size=21, hidden_size=128, output_size=3):
         """
         Deep Q-Network for Snake Game
-        Input: State vector of size 17
+        Input: State vector of size 21
         Output: Q-values for 3 actions (straight, turn right, turn left)
         """
         super(DQN, self).__init__()
@@ -49,7 +49,7 @@ class DQN(nn.Module):
         return x
 
 class DQNAgent:
-    def __init__(self, state_size=17, action_size=3, lr=0.001):
+    def __init__(self, state_size=21, action_size=3, lr=0.001):
         self.state_size = state_size
         self.action_size = action_size
         self.memory = deque(maxlen=100000)
@@ -180,7 +180,7 @@ class NeuralNetworkVisualizer:
 
         # Layer definitions - match the actual network architecture
         layers = [
-            {'name': 'Input', 'size': 17, 'activations': state_values},
+            {'name': 'Input', 'size': 21, 'activations': state_values},
             {'name': 'Hidden 1', 'size': 128, 'activations': activations.get('fc1', torch.zeros(128))},
             {'name': 'Hidden 2', 'size': 128, 'activations': activations.get('fc2', torch.zeros(128))},
             {'name': 'Output', 'size': 3, 'activations': activations.get('output', torch.zeros(3))}

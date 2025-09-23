@@ -15,6 +15,30 @@ class Direction(Enum):
     @staticmethod
     def get_index(direction):
         return {Direction.UP: 0, Direction.RIGHT: 1, Direction.DOWN: 2, Direction.LEFT: 3}[direction]
+    
+    @staticmethod
+    def get_position(pos, direction):
+        if direction == Direction.UP:
+            return (pos[0], pos[1] - 1)
+        if direction == Direction.DOWN:
+            return (pos[0], pos[1] + 1)
+        if direction == Direction.LEFT:
+            return (pos[0] - 1, pos[1])
+        if direction == Direction.RIGHT:
+            return (pos[0] + 1, pos[1])
+        
+    @staticmethod
+    def random_direction():
+        return random.choice([Direction.UP, Direction.DOWN, Direction.LEFT, Direction.RIGHT])
+    
+    @staticmethod
+    def random_direction_order():
+        direction_list = [Direction.UP, Direction.DOWN, Direction.LEFT, Direction.RIGHT]
+        random.shuffle(direction_list)
+        return direction_list
+
+def validate_position(pos, banned_tiles):
+    return pos[0] > 0 and pos[0] < 10 and pos[1] > 0 and pos[1] < 10 and pos not in banned_tiles
 
 class SnakeGameRL:
     def __init__(self, grid_size=10, display=True, render_delay=0):
@@ -43,11 +67,59 @@ class SnakeGameRL:
 
         self.reset()
 
+    def create_random_snake(self):
+        # init_length = random.randint(3, 7)
+        init_length = 20
+        snake_head_position = (random.randint(0, 9), random.randint(0, 9))
+        origin_position = snake_head_position
+        initial_positions = [snake_head_position]
+        safe_path = [snake_head_position]
+        banned_tiles = []
+        path_length = 1
+        while path_length < init_length:
+            path_set_flag = 0
+            direction_list = Direction.random_direction_order()
+            for i in direction_list:
+                path_candidate = Direction.get_position(origin_position, i)
+                print(path_candidate)
+                if path_candidate not in safe_path and validate_position(path_candidate, banned_tiles):
+                    safe_path.append(path_candidate)
+                    origin_position = safe_path[path_length]
+                    path_length += 1
+                    path_set_flag = 1
+                    break
+            if path_set_flag == 0:
+                banned_tiles.append(path_candidate)
+                path_length -= 1
+                origin_position = safe_path[path_length]
+        # initial_positions.append(Direction.get_position(snake_head_position, Direction.LEFT))
+        origin_position = snake_head_position
+        snake_length = 1
+        banned_tiles = []
+        while snake_length < init_length:
+            path_candidate = Direction.get_position
+            path_set_flag = 0
+            direction_list = Direction.random_direction_order()
+            for i in direction_list:
+                path_candidate = Direction.get_position(origin_position, i)
+                if path_candidate not in initial_positions and path_candidate not in safe_path and validate_position(path_candidate, banned_tiles):
+                    initial_positions.append(path_candidate)
+                    origin_position = initial_positions[snake_length]
+                    snake_length += 1
+                    path_set_flag = 1
+                    break
+            if path_set_flag == 0:
+                banned_tiles.append(path_candidate)
+                snake_length -= 1
+                origin_position = initial_positions[snake_length]
+
+        return deque(initial_positions)
+
     def reset(self):
         # Snake initialization
-        initial_positions = [(self.grid_size // 2, self.grid_size // 2), (self.grid_size // 2 - 1, self.grid_size // 2), (self.grid_size // 2 - 2, self.grid_size // 2), (self.grid_size // 2 - 3, self.grid_size // 2)]
-        self.snake_positions = deque(initial_positions)
-        self.old_positions = deque(initial_positions)
+
+
+        self.snake_positions = self.create_random_snake()
         self.direction = Direction.RIGHT
 
         # Food initialization
@@ -85,9 +157,10 @@ class SnakeGameRL:
         H = W = self.grid_size
 
         grid_snake_head = torch.zeros((H, W), dtype=torch.float32)
-        grid_snake_head_previous = torch.zeros((H, W), dtype=torch.float32)
+        # grid_snake_head_previous = torch.zeros((H, W), dtype=torch.float32)
         grid_snake_body = torch.zeros((H, W), dtype=torch.float32)
-        grid_snake_body_previous = torch.zeros((H, W), dtype=torch.float32)
+        # grid_snake_body_previous = torch.zeros((H, W), dtype=torch.float32)
+        grid_snake_tail = torch.zeros((H, W), dtype=torch.float32)
         grid_food_position = torch.zeros((H, W), dtype=torch.float32)
         grid_wall = torch.zeros((H, W), dtype=torch.float32)
 
@@ -95,13 +168,16 @@ class SnakeGameRL:
         for x, y in list(self.snake_positions)[1:]:
             grid_snake_body[y, x] = 1.0
 
-        for x, y in list(self.old_positions)[1:]:
-            grid_snake_body_previous[y, x] = 1.0
+        # for x, y in list(self.old_positions)[1:]:
+        #     grid_snake_body_previous[y, x] = 1.0
 
         # Mark snake head
         grid_snake_head[self.snake_positions[0][1], self.snake_positions[0][0]] = 1
 
-        grid_snake_head_previous[self.old_positions[0][1], self.old_positions[0][0]] = 1
+        # grid_snake_head_previous[self.old_positions[0][1], self.old_positions[0][0]] = 1
+
+        # Mark snake tail
+        grid_snake_tail[self.snake_positions[-1][1], self.snake_positions[-1][0]] = 1
 
         # Mark food position
         if self.food_position:
@@ -115,7 +191,8 @@ class SnakeGameRL:
         grid_wall[:, -1] = 1.0
 
         # Stack maps together for conv2d layer.
-        state_maps = torch.stack([grid_snake_head, grid_snake_body, grid_snake_head_previous, grid_snake_body_previous, grid_food_position, grid_wall], dim=0)
+        # state_maps = torch.stack([grid_snake_head, grid_snake_body, grid_snake_head_previous, grid_snake_body_previous, grid_snake_tail, grid_food_position], dim=0)
+        state_maps = torch.stack([grid_snake_head, grid_snake_body, grid_snake_tail, grid_food_position, grid_wall], dim=0)
 
         # get direction encoding for network
         idx = Direction.get_index(self.direction)
@@ -162,7 +239,7 @@ class SnakeGameRL:
         # action == 0: keep going straight
 
         # Move snake
-        self.old_positions = deque(self.snake_positions)
+        # self.old_positions = deque(self.snake_positions)
         head = self.snake_positions[0]
         new_head = (
             head[0] + self.direction.value[0],
@@ -175,7 +252,7 @@ class SnakeGameRL:
             new_head[1] < 0 or new_head[1] >= self.grid_size or
             new_head in self.snake_positions):
             self.done = True
-            reward = -20  # Big penalty for dying
+            reward = -50  # Big penalty for dying
             return self.get_state(), reward, True, {'score': self.score}
 
         # Move snake
@@ -192,7 +269,7 @@ class SnakeGameRL:
             if self.food_position is None:  # Won the game
                 self.done = True
                 self.won = True
-                reward = 100  # Huge bonus for winning
+                reward = 1000  # Huge bonus for winning
                 return self.get_state(), reward, True, {'score': self.score, 'won': True}
         else:
             # Remove tail if no food eaten
@@ -212,8 +289,8 @@ class SnakeGameRL:
 
         # if no food is eaten in 100 moves, end the game
         if self.steps - self.last_food_step >= 100:
-            self.done = True
             reward = -100  # Big penalty for not eating
+            self.done = True
 
         reward -= 0.1
 

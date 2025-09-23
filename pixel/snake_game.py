@@ -4,6 +4,7 @@ import random
 from enum import Enum
 from collections import deque
 import math
+import torch
 
 class Direction(Enum):
     UP = (0, -1)
@@ -44,7 +45,9 @@ class SnakeGameRL:
 
     def reset(self):
         # Snake initialization
-        self.snake_positions = deque([(self.grid_size // 2, self.grid_size // 2)])
+        initial_positions = [(self.grid_size // 2, self.grid_size // 2), (self.grid_size // 2 - 1, self.grid_size // 2), (self.grid_size // 2 - 2, self.grid_size // 2), (self.grid_size // 2 - 3, self.grid_size // 2)]
+        self.snake_positions = deque(initial_positions)
+        self.old_positions = deque(initial_positions)
         self.direction = Direction.RIGHT
 
         # Food initialization
@@ -53,7 +56,7 @@ class SnakeGameRL:
         # Game state
         self.score = 0
         self.steps = 0
-        self.max_steps = self.grid_size * self.grid_size * 20  # Prevent infinite loops
+        self.max_steps = self.grid_size * self.grid_size * 20  # Allow more steps for learning (2000 for 10x10)
         self.done = False
         self.won = False
 
@@ -78,96 +81,48 @@ class SnakeGameRL:
         return abs(head[0] - self.food_position[0]) + abs(head[1] - self.food_position[1])
 
     def get_state(self):
-        state = []
-        head = self.snake_positions[0]
+        """Return a grid representations of the game state"""
+        H = W = self.grid_size
 
-        # Direction of food relative to head (2 values: x and y direction)
-        food_dir_x = 0
-        food_dir_y = 0
-        if self.food_position[0] > head[0]:
-            food_dir_x = 1
-        elif self.food_position[0] < head[0]:
-            food_dir_x = -1
-        if self.food_position[1] > head[1]:
-            food_dir_y = 1
-        elif self.food_position[1] < head[1]:
-            food_dir_y = -1
+        grid_snake_head = torch.zeros((H, W), dtype=torch.float32)
+        grid_snake_head_previous = torch.zeros((H, W), dtype=torch.float32)
+        grid_snake_body = torch.zeros((H, W), dtype=torch.float32)
+        grid_snake_body_previous = torch.zeros((H, W), dtype=torch.float32)
+        grid_food_position = torch.zeros((H, W), dtype=torch.float32)
+        grid_wall = torch.zeros((H, W), dtype=torch.float32)
 
-        state.extend([food_dir_x, food_dir_y])  # Food directions, 2 values: x and y direction
+        # Mark snake positions
+        for x, y in list(self.snake_positions)[1:]:
+            grid_snake_body[y, x] = 1.0
 
-        # Current direction (4 values: one-hot encoding)
-        direction_one_hot = [0, 0, 0, 0]
-        direction_one_hot[Direction.get_index(self.direction)] = 1
-        state.extend(direction_one_hot) # Current direction, 4 values: one-hot encoding
+        for x, y in list(self.old_positions)[1:]:
+            grid_snake_body_previous[y, x] = 1.0
 
-        # Danger detection in 8 directions (straight, left, right, diagonals)
-        dangers = []
-        check_positions = [
-            (head[0], head[1] - 1),  # Up
-            (head[0] + 1, head[1] - 1),  # Up-Right
-            (head[0] + 1, head[1]),  # Right
-            (head[0] + 1, head[1] + 1),  # Down-Right
-            (head[0], head[1] + 1),  # Down
-            (head[0] - 1, head[1] + 1),  # Down-Left
-            (head[0] - 1, head[1]),  # Left
-            (head[0] - 1, head[1] - 1),  # Up-Left
-        ]
+        # Mark snake head
+        grid_snake_head[self.snake_positions[0][1], self.snake_positions[0][0]] = 1
 
-        for pos in check_positions:
-            danger = 0
-            if (pos[0] < 0 or pos[0] >= self.grid_size or
-                pos[1] < 0 or pos[1] >= self.grid_size or
-                pos in self.snake_positions):
-                danger = 1
-            dangers.append(danger)
+        grid_snake_head_previous[self.old_positions[0][1], self.old_positions[0][0]] = 1
 
-        state.extend(dangers) # Danger detection, 8 values: straight, left, right, diagonals
+        # Mark food position
+        if self.food_position:
+            fx, fy = self.food_position
+            grid_food_position[fy, fx] = 1.0
 
-        # Distance to food (normalized)
-        dist_x = (self.food_position[0] - head[0]) / self.grid_size
-        dist_y = (self.food_position[1] - head[1]) / self.grid_size
-        state.extend([dist_x, dist_y]) # Distance to food, 2 values: x and y (normalized)
+        # Walls as a border (helps look-ahead)
+        grid_wall[0, :]  = 1.0
+        grid_wall[-1, :] = 1.0
+        grid_wall[:, 0]  = 1.0
+        grid_wall[:, -1] = 1.0
 
-        # Snake length (normalized)
-        state.append(len(self.snake_positions) / (self.grid_size * self.grid_size)) # Snake length, 1 value (normalized)
+        # Stack maps together for conv2d layer.
+        state_maps = torch.stack([grid_snake_head, grid_snake_body, grid_snake_head_previous, grid_snake_body_previous, grid_food_position, grid_wall], dim=0)
 
-        # Tail end direction (4 values: one-hot encoding)
-        tail_direction_one_hot = [0, 0, 0, 0]
-        if len(self.snake_positions) >= 2:
-            # Calculate direction from second-to-last segment to tail
-            tail = self.snake_positions[-1]
-            second_to_last = self.snake_positions[-2]
-            tail_dx = tail[0] - second_to_last[0]
-            tail_dy = tail[1] - second_to_last[1]
+        # get direction encoding for network
+        idx = Direction.get_index(self.direction)
+        dir_onehot = torch.zeros(4, dtype=torch.float32)
+        dir_onehot[idx] = 1.0
 
-            # Convert to Direction enum
-            if tail_dx == 0 and tail_dy == -1:
-                tail_direction = Direction.UP
-            elif tail_dx == 0 and tail_dy == 1:
-                tail_direction = Direction.DOWN
-            elif tail_dx == -1 and tail_dy == 0:
-                tail_direction = Direction.LEFT
-            elif tail_dx == 1 and tail_dy == 0:
-                tail_direction = Direction.RIGHT
-            else:
-                # Fallback to current direction if unable to determine
-                tail_direction = self.direction
-
-            tail_direction_one_hot[Direction.get_index(tail_direction)] = 1
-        else:
-            # For single segment snake, use current direction
-            tail_direction_one_hot[Direction.get_index(self.direction)] = 1
-
-        state.extend(tail_direction_one_hot) # Tail end direction, 4 values: one-hot encoding
-
-        # Food directions, 2 values: x and y direction
-        # Current direction, 4 values: one-hot encoding
-        # Danger detection, 8 values: straight, left, right, diagonals
-        # Distance to food, 2 values: x and y (normalized)
-        # Snake length, 1 value (normalized)
-        # Tail end direction, 4 values: one-hot encoding
-
-        return np.array(state, dtype=np.float32)
+        return (state_maps, dir_onehot)
 
     def get_action_from_direction(self, new_direction):
         """Convert absolute direction to relative action (straight, left, right)"""
@@ -207,6 +162,7 @@ class SnakeGameRL:
         # action == 0: keep going straight
 
         # Move snake
+        self.old_positions = deque(self.snake_positions)
         head = self.snake_positions[0]
         new_head = (
             head[0] + self.direction.value[0],
@@ -236,7 +192,7 @@ class SnakeGameRL:
             if self.food_position is None:  # Won the game
                 self.done = True
                 self.won = True
-                reward = 50  # Huge bonus for winning
+                reward = 100  # Huge bonus for winning
                 return self.get_state(), reward, True, {'score': self.score, 'won': True}
         else:
             # Remove tail if no food eaten
@@ -245,21 +201,22 @@ class SnakeGameRL:
             # Small reward/penalty based on distance to food
             new_distance = self._calculate_distance_to_food()
             if new_distance < self.distance_to_food:
-                reward = 1  # Getting closer to food
+                reward = 2  # Getting closer to food (increased reward)
             elif new_distance > self.distance_to_food:
-                reward = -3  # Getting farther from food
+                reward = -1  # Getting farther from food
             self.distance_to_food = new_distance
 
         # Check if exceeded max steps (to prevent infinite loops)
         if self.steps >= self.max_steps:
             self.done = True
-            reward = -10  # Penalty for taking too long
 
-        if self.steps - self.last_food_step >= 100:
+        # Dynamic timeout based on snake length - longer snakes need more time
+        timeout_limit = max(200, len(self.snake_positions) * 10)
+        if self.steps - self.last_food_step >= timeout_limit:
             self.done = True
-            reward = -100
+            reward = -100  # Big penalty for not eating
 
-        reward -= 0.01
+        reward -= 0.01  # Much smaller per-step penalty to allow longer games
 
         return self.get_state(), reward, self.done, {'score': self.score}
 
@@ -323,7 +280,7 @@ class SnakeGameRL:
 
     def get_state_size(self):
         """Return the size of the state vector"""
-        return 21  # 2 food dir + 4 current dir + 8 dangers + 2 distances + 1 length + 4 tail direction
+        return 200
 
 class SnakeTrainer:
     def __init__(self, grid_size=10):
@@ -389,7 +346,7 @@ if __name__ == "__main__":
                 elif event.key == pygame.K_RIGHT:
                     action = game.get_action_from_direction(Direction.RIGHT)
                     state, reward, done, info = game.step(action)
-                print("State vector:", state)
+
 
                 if done:
                     print(f"Game Over! Score: {info['score']}")
