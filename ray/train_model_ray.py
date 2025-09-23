@@ -122,7 +122,7 @@ class DQNAgent:
 
 def train_agent(episodes=1000, batch_size=32, update_target_every=10):
     # Import the game (assuming it's in a file called snake_game.py)
-    from snake_game import SnakeGameRL
+    from snake_game_ray import SnakeGameRL
 
     # Initialize game and agent
     game = SnakeGameRL(grid_size=10, display=False)
@@ -170,12 +170,12 @@ def train_agent(episodes=1000, batch_size=32, update_target_every=10):
 
         # Save model periodically
         if episode % 500 == 0 and episode > 0:
-            agent.save(f'snake_model_episode_{episode}.pth')
+            agent.save(f'ray/saved/snake_model_episode_{episode}.pth')
 
     return agent, scores
 
 def test_agent(agent, num_games=10, display=True):
-    from snake_game import SnakeGameRL
+    from snake_game_ray import SnakeGameRL
 
     game = SnakeGameRL(grid_size=10, display=display, render_delay=5)
     agent.epsilon = 0  # No exploration during testing
@@ -242,8 +242,8 @@ if __name__ == "__main__":
     agent, training_scores = train_agent(episodes=2000, batch_size=64)
 
     # Save the final model
-    agent.save('snake_model_final.pth')
-    print("\nModel saved as 'snake_model_final.pth'")
+    agent.save('ray/saved/snake_model_final.pth')
+    print("\nModel saved as 'ray/saved/snake_model_final.pth'")
 
     # Plot training progress
     plot_training_progress(list(training_scores))

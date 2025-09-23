@@ -1,10 +1,10 @@
 import pygame
 import sys
-from train_model import DQNAgent
+from train_model_pixel import DQNAgent
 import numpy as np
 
 def test_agent(agent, num_games=10, display=True):
-    from snake_game import SnakeGameRL
+    from snake_game_pixel import SnakeGameRL
 
     game = SnakeGameRL(grid_size=10, display=display, render_delay=30)
     agent.epsilon = 0  # No exploration during testing
@@ -43,5 +43,5 @@ def test_agent(agent, num_games=10, display=True):
 
 if __name__ == "__main__":
     agent = DQNAgent(state_size=200, action_size=3)
-    agent.load("saved/snake_model_pixel_final.pth")
+    agent.load("pixel/saved/snake_model_episode_pixel_1800.pth")
     test_agent(agent, num_games=5, display=True)

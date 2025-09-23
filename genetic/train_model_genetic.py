@@ -1,20 +1,13 @@
-#!/usr/bin/env python3
-"""
-Training script for the genetic algorithm Snake AI with threading support
-"""
-
-from genetic_snake import train_genetic_algorithm, plot_evolution_progress, test_genetic_individual
+from snake_game_genetic import train_genetic_algorithm, plot_evolution_progress, test_genetic_individual
 import sys
 import os
 import multiprocessing
 
 def get_optimal_threads():
-    """Get optimal number of threads based on CPU cores"""
     cpu_count = multiprocessing.cpu_count()
     return min(max(2, cpu_count - 1), 8)  # Leave 1 core free, max 8 threads
 
 def quick_train():
-    """Quick training with sensible defaults"""
     import torch
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     threads = get_optimal_threads()
@@ -23,9 +16,9 @@ def quick_train():
     print(f"Device: {device} | Threads: {threads}")
 
     ga = train_genetic_algorithm(
-        generations=15,
-        population_size=20,
-        games_per_eval=3,
+        generations=30,
+        population_size=40,
+        games_per_eval=5,
         num_threads=threads,
         quiet=True,
         verbose=False,
@@ -36,7 +29,6 @@ def quick_train():
     return ga
 
 def custom_train():
-    """Custom training with user preferences"""
     import torch
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -44,14 +36,14 @@ def custom_train():
     print(f"Auto-detected device: {device}")
 
     try:
-        generations = int(input("Generations (default 20): ") or "20")
-        population_size = int(input("Population size (default 25): ") or "25")
-        games_per_eval = int(input("Games per evaluation (default 3): ") or "3")
+        generations = int(input("Generations (default 40): ") or "40")
+        population_size = int(input("Population size (default 50): ") or "50")
+        games_per_eval = int(input("Games per evaluation (default 5): ") or "5")
         threads = int(input(f"Threads (default {get_optimal_threads()}): ") or str(get_optimal_threads()))
         quiet = input("Quiet mode? (Y/n): ").strip().lower() != 'n'
     except ValueError:
         print("Invalid input, using defaults...")
-        generations, population_size, games_per_eval = 20, 25, 3
+        generations, population_size, games_per_eval = 40, 50, 5
         threads = get_optimal_threads()
         quiet = True
 

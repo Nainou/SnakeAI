@@ -364,7 +364,7 @@ class SnakeGameWithNNVisualization:
         self.nn_surface = pygame.Surface((nn_width, self.height))
 
         # Initialize game
-        from snake_game import SnakeGameRL
+        from snake_game_ray import SnakeGameRL
         self.game = SnakeGameRL(grid_size=grid_size, display=False)
 
         # Initialize visualizer
@@ -502,7 +502,7 @@ def visualize_trained_agent(model_path, grid_size=10, num_games=3):
     except FileNotFoundError:
         print(f"Model file {model_path} not found. Training a simple agent...")
         # Train a basic agent quickly for demonstration
-        from snake_game import SnakeGameRL
+        from snake_game_ray import SnakeGameRL
         game = SnakeGameRL(grid_size=grid_size, display=False)
 
         # Quick training
