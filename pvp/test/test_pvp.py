@@ -360,7 +360,7 @@ def main():
             selected_models = [str(model_files[i]) for i in indices if 0 <= i < len(model_files)]
 
         if not selected_models:
-            print("❌ No valid models selected")
+            print("No valid models selected")
             return
 
         # Get game configuration
@@ -377,11 +377,11 @@ def main():
         scores, wins = test_pvp_models(selected_models, num_games=5, num_snakes=num_snakes)
 
     except (ValueError, IndexError) as e:
-        print(f"❌ Invalid selection: {e}")
+        print(f"Invalid selection: {e}")
     except KeyboardInterrupt:
         print("\n\nTesting interrupted by user.")
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
 
 
 if __name__ == "__main__":

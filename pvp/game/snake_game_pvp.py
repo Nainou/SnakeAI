@@ -1,10 +1,3 @@
-"""
-PvP Snake Game Implementation
-
-Supports 2-4 snakes competing on a large grid with genetic algorithm AI.
-Each snake has distinct colors and can use different saved models.
-"""
-
 import numpy as np
 import random
 import pygame

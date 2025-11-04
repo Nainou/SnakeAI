@@ -98,7 +98,7 @@ def train_pvp_genetic_algorithm(generations=50, population_size=50, games_per_ev
     elapsed_time = time.time() - start_time
 
     if not quiet:
-        print(f"\n✅ PvP Training completed in {elapsed_time:.1f} seconds")
+        print(f"\nPvP Training completed in {elapsed_time:.1f} seconds")
         print(f"Final best score: {ga.best_score_history[-1]:.1f}")
         print(f"Final best position: {ga.population[0].avg_position:.1f}")
         print(f"Improvement: {ga.best_score_history[-1] - ga.best_score_history[0]:.1f} points")
@@ -154,7 +154,7 @@ def plot_evolution_progress(ga):
 
 def main():
     """Main training function with configuration options"""
-    print("🐍 PvP Snake AI Training")
+    print("PvP Snake AI Training")
     print("=" * 50)
     print("Choose training mode:")
     print("1. Quick train (20 gens, 30 pop, 2 snakes)")
@@ -212,7 +212,7 @@ def main():
         return
 
     # Post-training options
-    print(f"\n📊 Results: Best={ga.best_score_history[-1]:.1f}, "
+    print(f"\nResults: Best={ga.best_score_history[-1]:.1f}, "
           f"Position={ga.population[0].avg_position:.1f}, "
           f"Improvement={ga.best_score_history[-1] - ga.best_score_history[0]:.1f}")
 
@@ -221,7 +221,7 @@ def main():
     if plot_choice == 'y':
         plot_evolution_progress(ga)
 
-    print("\n✅ Training complete! Use 'python test/test_pvp.py' to test the models.")
+    print("\nTraining complete! Use 'python test/test_pvp.py' to test the models.")
 
 
 if __name__ == "__main__":

@@ -76,7 +76,6 @@ def main():
         print("\n\nDemo interrupted by user.")
     except Exception as e:
         print(f"\nError: {e}")
-        print("Make sure you have pygame installed: pip install pygame")
 
 
 if __name__ == "__main__":

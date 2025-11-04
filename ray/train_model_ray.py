@@ -239,7 +239,7 @@ if __name__ == "__main__":
     print("=" * 50)
 
     # Train the agent
-    agent, training_scores = train_agent(episodes=2000, batch_size=64)
+    agent, training_scores = train_agent(episodes=1000, batch_size=64)
 
     # Save the final model
     agent.save('ray/saved/snake_model_final.pth')

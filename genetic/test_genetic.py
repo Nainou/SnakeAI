@@ -13,7 +13,7 @@ sys.path.append(os.path.dirname(__file__))
 from snake_game_genetic import test_genetic_individual
 
 def main():
-    print("🐍 Genetic Algorithm Snake AI Test with Visualization")
+    print("Genetic Algorithm Snake AI Test with Visualization")
     print("=" * 60)
 
     # Look for trained models
@@ -37,16 +37,16 @@ def main():
             break
 
     if model_to_test is None:
-        print("❌ No trained genetic algorithm models found!")
+        print("No trained genetic algorithm models found!")
         print("Available models should be in the parent directory:")
         for model_file in model_files:
             print(f"   - {model_file}")
         print("\nPlease train a model first using train_genetic.py")
         return
 
-    print(f"🎯 Found model: {model_to_test}")
-    print(f"🎮 Starting visualization test...")
-    print("📝 Controls: Close the pygame window to stop testing")
+    print(f"Found model: {model_to_test}")
+    print(f"Starting visualization test...")
+    print("Controls: Close the pygame window to stop testing")
     print("=" * 60)
 
     try:
@@ -58,16 +58,16 @@ def main():
         )
 
         if scores:
-            print("\n🎉 Test completed successfully!")
-            print(f"🏆 Best score in this test: {max(scores)}")
-            print(f"📊 Average score: {sum(scores)/len(scores):.2f}")
+            print("\nTest completed successfully!")
+            print(f"Best score in this test: {max(scores)}")
+            print(f"Average score: {sum(scores)/len(scores):.2f}")
         else:
-            print("\n⚠️  Test was interrupted or no games completed")
+            print("\nTest was interrupted or no games completed")
 
     except KeyboardInterrupt:
-        print("\n\n⚠️  Test interrupted by user (Ctrl+C)")
+        print("\n\nTest interrupted by user (Ctrl+C)")
     except Exception as e:
-        print(f"\n❌ Error during testing: {e}")
+        print(f"\nError during testing: {e}")
         import traceback
         traceback.print_exc()
     finally:

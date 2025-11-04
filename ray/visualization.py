@@ -493,7 +493,7 @@ class SnakeGameWithNNVisualization:
 def visualize_trained_agent(model_path, grid_size=10, num_games=3):
     """Load a trained agent and visualize it playing"""
     # Create agent
-    agent = DQNAgent(state_size=17, action_size=3)
+    agent = DQNAgent(state_size=21, action_size=3)
 
     # Load trained model
     try:
@@ -534,7 +534,7 @@ def visualize_trained_agent(model_path, grid_size=10, num_games=3):
 
 if __name__ == "__main__":
     try:
-        model_path = "snake_model_episode_1500.pth"
+        model_path = "snake_model_final.pth"
         visualize_trained_agent(model_path, grid_size=10, num_games=3)
     except Exception as e:
         print(f"Error during visualization: {e}")

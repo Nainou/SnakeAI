@@ -1,10 +1,3 @@
-"""
-Genetic Algorithm for PvP Snake AI
-
-Handles evolution of neural networks for competitive snake gameplay.
-Supports multiple snakes with different strategies.
-"""
-
 import numpy as np
 import random
 import torch

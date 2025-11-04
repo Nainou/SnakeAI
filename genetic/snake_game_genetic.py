@@ -708,7 +708,7 @@ def train_genetic_algorithm(generations=50, population_size=50, games_per_eval=3
     elapsed_time = time.time() - start_time
 
     if not quiet:
-        print(f"\n✅ Training completed in {elapsed_time:.1f} seconds")
+        print(f"\nTraining completed in {elapsed_time:.1f} seconds")
         print(f"Final best score: {ga.best_score_history[-1]:.1f}")
         print(f"Improvement: {ga.best_score_history[-1] - ga.best_score_history[0]:.1f} points")
 

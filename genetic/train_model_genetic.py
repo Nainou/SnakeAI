@@ -12,7 +12,7 @@ def quick_train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     threads = get_optimal_threads()
 
-    print(f"🚀 Quick Training Mode")
+    print(f"Quick Training Mode")
     print(f"Device: {device} | Threads: {threads}")
 
     ga = train_genetic_algorithm(
@@ -25,14 +25,14 @@ def quick_train():
         device=device
     )
 
-    print(f"✅ Quick training complete! Best score: {ga.best_score_history[-1]:.1f}")
+    print(f"Quick training complete! Best score: {ga.best_score_history[-1]:.1f}")
     return ga
 
 def custom_train():
     import torch
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    print("⚙️ Custom Training Configuration")
+    print("Custom Training Configuration")
     print(f"Auto-detected device: {device}")
 
     try:
@@ -50,7 +50,7 @@ def custom_train():
     total_evals = generations * population_size * games_per_eval
     speed_multiplier = 10 if device.type == 'cuda' else 3  # GPU is ~3x faster than estimation
 
-    print(f"\n📋 Configuration:")
+    print(f"\nConfiguration:")
     print(f"  Device: {device}")
     print(f"  Generations: {generations}")
     print(f"  Population: {population_size}")
@@ -74,11 +74,11 @@ def custom_train():
         device=device
     )
 
-    print(f"✅ Training complete! Best score: {ga.best_score_history[-1]:.1f}")
+    print(f"Training complete! Best score: {ga.best_score_history[-1]:.1f}")
     return ga
 
 def main():
-    print("🐍 Genetic Algorithm Snake AI Training")
+    print("Genetic Algorithm Snake AI Training")
     print("=" * 50)
     print("Choose training mode:")
     print("1. Quick train (15 gens, 20 pop, fast)")
@@ -97,7 +97,7 @@ def main():
             print("🎮 Testing existing model...")
             test_genetic_individual('genetic_snake_final.pth', num_games=5, display=True)
         else:
-            print("❌ No trained model found. Train one first!")
+            print("No trained model found. Train one first!")
         return
     else:
         print("Invalid choice, using quick train...")
@@ -107,7 +107,7 @@ def main():
         return
 
     # Post-training options
-    print(f"\n📊 Results: Best={ga.best_score_history[-1]:.1f}, "
+    print(f"\nResults: Best={ga.best_score_history[-1]:.1f}, "
           f"Improvement={ga.best_score_history[-1] - ga.best_score_history[0]:.1f}")
 
     # Plot evolution progress
@@ -121,7 +121,7 @@ def main():
         print("🎮 Testing best individual...")
         test_genetic_individual('genetic_snake_final.pth', num_games=5, display=True)
 
-    print("\n✅ All done! Use 'python test.py' to test anytime.")
+    print("\nAll done! Use 'python test.py' to test anytime.")
 
 if __name__ == "__main__":
     try:

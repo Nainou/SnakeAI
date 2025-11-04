@@ -10,7 +10,6 @@ A Python project where 2–4 genetically trained snakes compete on a large grid 
 - **Modular Architecture**: Clean separation of game logic, AI, training, and testing
 - **Visual Neural Networks**: Real-time visualization of each snake's neural network
 - **Headless Training**: Fast training without rendering for maximum speed
-- **Pygame Rendering**: Beautiful visualization during testing
 
 ## Project Structure
 
@@ -162,30 +161,3 @@ scores, wins = test_pvp_models(
 - **`ai/genetic_algorithm.py`**: Genetic algorithm implementation
 - **`train/train_pvp.py`**: Headless training script
 - **`test/test_pvp.py`**: Testing with visualization
-
-## Tips for Better Performance
-
-1. **Use GPU**: Training is much faster on CUDA-enabled GPUs
-2. **Adjust Population**: Larger populations explore more but train slower
-3. **More Snakes**: 4-snake games are more complex but may learn better strategies
-4. **Longer Training**: More generations generally lead to better performance
-5. **Multiple Games**: More evaluation games give more stable fitness scores
-
-## Troubleshooting
-
-- **No models found**: Train models first using `python train.py`
-- **CUDA errors**: Install PyTorch with CUDA support or use CPU
-- **Pygame issues**: Ensure display is available for testing
-- **Memory issues**: Reduce population size or use fewer snakes
-
-## Contributing
-
-This project follows clean architecture principles:
-- Keep rendering, logic, and AI separate
-- Use modular, object-oriented code
-- Comment well and follow clean code practices
-- Ask clarifying questions if unsure
-
-## License
-
-This project is for educational purposes. Feel free to modify and extend for your own snake AI experiments!

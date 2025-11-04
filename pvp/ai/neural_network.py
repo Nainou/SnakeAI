@@ -1,9 +1,3 @@
-"""
-Neural Network Architecture for PvP Snake AI
-
-Enhanced neural network designed for competitive snake gameplay.
-"""
-
 import torch
 import torch.nn as nn
 
@@ -11,7 +5,7 @@ import torch.nn as nn
 class NeuralNetwork(nn.Module):
     def __init__(self, input_size=17, hidden_size=64, output_size=3, device=None):
         """
-        Enhanced neural network for PvP genetic algorithm
+        Neural network for PvP genetic algorithm
 
         Args:
             input_size: Size of input state vector (17 for snake state)
@@ -22,7 +16,6 @@ class NeuralNetwork(nn.Module):
         super(NeuralNetwork, self).__init__()
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Larger, deeper network for better learning capacity
         self.fc1 = nn.Linear(input_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
         self.fc3 = nn.Linear(hidden_size, hidden_size // 2)
