@@ -80,7 +80,7 @@ class SnakeGameRL:
         return abs(head[0] - self.food_position[0]) + abs(head[1] - self.food_position[1])
 
     def get_state(self):
-        """Return a grid representations of the game state"""
+        # Return a grid representations of the game state
         H = W = self.grid_size
 
         grid_snake_head = torch.zeros((H, W), dtype=torch.float32)
@@ -150,7 +150,7 @@ class SnakeGameRL:
         return (state_maps, extra_information)
 
     def get_action_from_direction(self, new_direction):
-        """Convert absolute direction to relative action (straight, left, right)"""
+        # Convert absolute direction to relative action (straight, left, right)
         current_idx = Direction.get_index(self.direction)
         new_idx = Direction.get_index(new_direction)
 
@@ -167,8 +167,8 @@ class SnakeGameRL:
             return 0  # Keep going straight
 
     def step(self, action):
-        """Execute one game step with given action
-        Action: 0 = straight, 1 = turn right, 2 = turn left"""
+        # Execute one game step with given action
+        # Action: 0 = straight, 1 = turn right, 2 = turn left
 
         if self.done:
             return self.get_state(), 0, True, {}
@@ -298,12 +298,12 @@ class SnakeGameRL:
             self.clock.tick(self.render_delay)
 
     def close(self):
-        """Close the pygame window"""
+        # Close the pygame window
         if self.display:
             pygame.quit()
 
     def get_state_size(self):
-        """Return the size of the state vector"""
+        # Return the size of the state vector
         return 200
 
 class SnakeTrainer:
@@ -312,7 +312,7 @@ class SnakeTrainer:
         self.game = SnakeGameRL(grid_size=grid_size, display=False)
 
     def evaluate_agent(self, agent_func, num_episodes=100, verbose=False):
-        """Evaluate an agent function that takes state and returns action"""
+        # Evaluate an agent function that takes state and returns action
         scores = []
         wins = 0
 

@@ -5,6 +5,7 @@ import torch
 from collections import deque
 from enum import Enum
 
+
 # Include Snake class inline for self-contained demo
 class Direction(Enum):
     UP = (0, -1)
@@ -18,7 +19,6 @@ class Direction(Enum):
 
 
 class Snake:
-    # Individual snake in the PvP game
     def __init__(self, snake_id, start_pos, color, grid_size, device=None):
         self.snake_id = snake_id
         self.color = color
@@ -132,7 +132,6 @@ class Snake:
 
 
 class NeuralNetworkVisualizer:
-    # Neural network visualizer adapted for PVP game (17 input size)
     def __init__(self, width=1200, height=800):
         self.width = width
         self.height = height
@@ -156,7 +155,6 @@ class NeuralNetworkVisualizer:
         self.label_font_size = 12
 
     def draw_network(self, surface, activations, state_values, action=None, hidden_size=64):
-        # Draw the neural network with activations - improved clarity
         network_rect = pygame.Rect(0, 0, self.width, self.height)
         pygame.draw.rect(surface, self.colors['background'], network_rect)
 
@@ -280,9 +278,16 @@ class NeuralNetworkVisualizer:
                 if is_selected:
                     color = self.colors['selected']
 
-                # Draw neuron - larger size
-                neuron_radius = max(8, min(12, 200 // max(layer['size'], 1)))
-                pygame.draw.circle(surface, color, (int(neuron_x), int(neuron_y)), neuron_radius)
+                # Draw neuron - scale radius based on layer size to prevent overlap
+                # Smaller neurons for larger layers
+                base_radius = 12
+                if layer['size'] <= 20:
+                    neuron_radius = base_radius
+                elif layer['size'] <= 50:
+                    neuron_radius = max(6, base_radius * 20 / layer['size'])
+                else:
+                    neuron_radius = max(4, base_radius * 20 / layer['size'])
+                pygame.draw.circle(surface, color, (int(neuron_x), int(neuron_y)), int(neuron_radius))
                 border_color = self.colors['selected'] if is_selected else self.colors['text']
                 pygame.draw.circle(surface, border_color, (int(neuron_x), int(neuron_y)), neuron_radius, 2)
 
@@ -374,8 +379,7 @@ class NeuralNetworkVisualizer:
 
 
 class SnakeGamePvP:
-    # PvP Snake game implementation for genetic algorithm training with optional pygame visualization
-
+    # PvP Snake game implementation
     def __init__(self, grid_size=20, num_snakes=2, display=False, render_delay=0):
         self.grid_size = grid_size
         self.num_snakes = min(max(1, num_snakes), 4)  # 1-4 snakes (1 for single player, 2-4 for PvP)
@@ -435,7 +439,6 @@ class SnakeGamePvP:
         self.reset()
 
     def reset(self):
-        # Reset the game with new snake positions
         # Initialize snakes at different starting positions
         start_positions = self._get_start_positions()
 
@@ -882,8 +885,11 @@ class SnakeGamePvP:
 
         pygame.display.flip()
 
+        # Always tick the clock to prevent freezing, use at least 1 FPS
         if self.render_delay > 0:
             self.clock.tick(self.render_delay)
+        else:
+            self.clock.tick(1)  # Minimum 1 FPS to prevent freezing
 
     def close(self):
         # Close the pygame window

@@ -11,6 +11,8 @@ from threading import Lock
 import time
 import copy
 import pygame
+from pathlib import Path
+import re
 
 class Direction(Enum):
     UP = (0, -1)
@@ -23,7 +25,7 @@ class Direction(Enum):
         return {Direction.UP: 0, Direction.RIGHT: 1, Direction.DOWN: 2, Direction.LEFT: 3}[direction]
 
 class SnakeGameRL:
-    """Snake game implementation for genetic algorithm training with optional pygame visualization"""
+    # Snake game implementation for genetic algorithm training with optional pygame visualization
 
     def __init__(self, grid_size=10, display=False, render_delay=0):
         self.grid_size = grid_size
@@ -143,12 +145,12 @@ class SnakeGameRL:
         return np.array(state, dtype=np.float32)
 
     def get_state_size(self):
-        """Return the size of the state vector"""
+        # Return the size of the state vector
         return 17  # 2 food dir + 4 current dir + 8 dangers + 2 distances + 1 length
 
     def step(self, action):
-        """Execute one game step with given action
-        Action: 0 = straight, 1 = turn right, 2 = turn left"""
+        # Execute one game step with given action
+        # Action: 0 = straight, 1 = turn right, 2 = turn left
 
         if self.done:
             return self.get_state(), 0, True, {}
@@ -226,7 +228,7 @@ class SnakeGameRL:
         return self.get_state(), reward, self.done, {'score': self.score}
 
     def render(self):
-        """Render the game using pygame if display is enabled"""
+        # Render the game using pygame if display is enabled
         if not self.display:
             return
 
@@ -286,17 +288,15 @@ class SnakeGameRL:
             self.clock.tick(self.render_delay)
 
     def close(self):
-        """Close the pygame window"""
+        # Close the pygame window
         if self.display:
             pygame.quit()
 
 
 class NeuralNetwork(nn.Module):
     def __init__(self, input_size=17, hidden_size=64, output_size=3, device=None):
-        """
-        Enhanced neural network for genetic algorithm
-        Larger network to break through performance plateaus
-        """
+        # Enhanced neural network for genetic algorithm
+        # Larger network to break through performance plateaus
         super(NeuralNetwork, self).__init__()
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -323,10 +323,8 @@ class NeuralNetwork(nn.Module):
 
 class Individual:
     def __init__(self, input_size=17, hidden_size=64, output_size=3, device=None):
-        """
-        Represents one individual in the genetic algorithm population
-        Each individual has a neural network and tracks its fitness
-        """
+        # Represents one individual in the genetic algorithm population
+        # Each individual has a neural network and tracks its fitness
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.network = NeuralNetwork(input_size, hidden_size, output_size, self.device)
         self.fitness = 0
@@ -337,21 +335,21 @@ class Individual:
         self.wins = 0
 
     def act(self, state):
-        """Get action from the neural network"""
+        # Get action from the neural network
         with torch.no_grad():
             state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
             output = self.network(state_tensor)
             return output.argmax().item()
 
     def get_weights(self):
-        """Extract all weights and biases as a flat numpy array"""
+        # Extract all weights and biases as a flat numpy array
         weights = []
         for param in self.network.parameters():
             weights.extend(param.data.flatten().cpu().numpy())
         return np.array(weights)
 
     def set_weights(self, weights):
-        """Set all weights and biases from a flat numpy array"""
+        # Set all weights and biases from a flat numpy array
         idx = 0
         for param in self.network.parameters():
             param_shape = param.shape
@@ -360,7 +358,7 @@ class Individual:
             idx += param_size
 
     def copy(self):
-        """Create a deep copy of this individual"""
+        # Create a deep copy of this individual
         new_individual = Individual(device=self.device)
         new_individual.network.load_state_dict(self.network.state_dict())
         new_individual.fitness = self.fitness
@@ -369,18 +367,15 @@ class Individual:
 class GeneticAlgorithm:
     def __init__(self, population_size=50, mutation_rate=0.15, crossover_rate=0.8,
                  elitism_ratio=0.15, tournament_size=5, num_threads=4, device=None):
-        """
-        Genetic Algorithm for evolving Snake AI
-
-        Args:
-            population_size: Number of individuals in each generation
-            mutation_rate: Probability of mutation for each weight
-            crossover_rate: Probability of crossover between parents
-            elitism_ratio: Fraction of best individuals to keep unchanged
-            tournament_size: Number of individuals in tournament selection
-            num_threads: Number of threads for parallel evaluation
-            device: Device to run neural networks on (cuda/cpu)
-        """
+        # Genetic Algorithm for evolving Snake AI
+        # Args:
+        #   population_size: Number of individuals in each generation
+        #   mutation_rate: Probability of mutation for each weight
+        #   crossover_rate: Probability of crossover between parents
+        #   elitism_ratio: Fraction of best individuals to keep unchanged
+        #   tournament_size: Number of individuals in tournament selection
+        #   num_threads: Number of threads for parallel evaluation
+        #   device: Device to run neural networks on (cuda/cpu)
         self.population_size = population_size
         self.mutation_rate = mutation_rate
         self.crossover_rate = crossover_rate
@@ -405,7 +400,7 @@ class GeneticAlgorithm:
         self.print_lock = Lock()
 
     def evaluate_individual_worker(self, args):
-        """Worker function for threaded evaluation"""
+        # Worker function for threaded evaluation
         individual, game_class, num_games, individual_id = args
 
         total_score = 0
@@ -454,7 +449,7 @@ class GeneticAlgorithm:
         return individual_id, fitness, avg_score
 
     def evaluate_population(self, game_class, num_games=3, verbose=False, progress_callback=None):
-        """Evaluate the entire population's fitness using threading"""
+        # Evaluate the entire population's fitness using threading
         start_time = time.time()
 
         if verbose:
@@ -501,12 +496,12 @@ class GeneticAlgorithm:
                   f"Fitness={fitnesses[0]:.0f} ({eval_time:.1f}s)")
 
     def tournament_selection(self):
-        """Select an individual using tournament selection"""
+        # Select an individual using tournament selection
         tournament = random.sample(self.population, self.tournament_size)
         return max(tournament, key=lambda x: x.fitness)
 
     def crossover(self, parent1, parent2):
-        """Create two offspring through crossover"""
+        # Create two offspring through crossover
         if random.random() > self.crossover_rate:
             return parent1.copy(), parent2.copy()
 
@@ -529,7 +524,7 @@ class GeneticAlgorithm:
         return offspring1, offspring2
 
     def mutate(self, individual):
-        """Enhanced mutation with adaptive noise and multiple strategies"""
+        # Enhanced mutation with adaptive noise and multiple strategies
         weights = individual.get_weights()
 
         # Adaptive mutation strength based on generation
@@ -551,13 +546,13 @@ class GeneticAlgorithm:
         individual.set_weights(weights)
 
     def calculate_diversity(self, individual1, individual2):
-        """Calculate diversity between two individuals based on weight differences"""
+        # Calculate diversity between two individuals based on weight differences
         weights1 = individual1.get_weights()
         weights2 = individual2.get_weights()
         return np.linalg.norm(weights1 - weights2)
 
     def diversity_selection(self, candidates, target_count):
-        """Select individuals that maximize diversity"""
+        # Select individuals that maximize diversity
         if len(candidates) <= target_count:
             return candidates
 
@@ -584,7 +579,7 @@ class GeneticAlgorithm:
         return selected
 
     def evolve_generation(self):
-        """Create the next generation using genetic operations with diversity preservation"""
+        # Create the next generation using genetic operations with diversity preservation
         new_population = []
 
         # Enhanced elitism: keep the best individuals but ensure diversity
@@ -620,35 +615,75 @@ class GeneticAlgorithm:
         self.generation += 1
 
     def get_best_individual(self):
-        """Get the best individual from current population"""
+        # Get the best individual from current population
         return self.population[0] if self.population else None
 
-    def save_best(self, filepath):
-        """Save the best individual's network"""
+    def save_best(self, filepath, include_metadata=True):
+        # Save the best individual's network with metadata in filename
+        # Args:
+        #   filepath: Path to save the model (can be directory or full path)
+        #   include_metadata: If True, include architecture metadata in filename
         best_individual = self.get_best_individual()
-        if best_individual:
-            torch.save(best_individual.network.state_dict(), filepath)
+        if not best_individual:
+            return
+
+        # Extract architecture info
+        # Genetic model: NeuralNetwork with input_size=17, hidden_size=64, output_size=3
+        input_size = best_individual.network.fc1.in_features
+        hidden_size = best_individual.network.fc1.out_features
+        output_size = best_individual.network.fc4.out_features
+
+        # If include_metadata, create filename with metadata
+        if include_metadata:
+            path_obj = Path(filepath)
+
+            # Extract extra info from filename if present
+            extra_info = ""
+            if path_obj.suffix:  # Has extension, treat as file path
+                if 'gen' in path_obj.stem.lower():
+                    gen_match = re.search(r'gen[_\s]*(\d+)', path_obj.stem.lower())
+                    if gen_match:
+                        extra_info = f"gen{gen_match.group(1)}"
+                elif 'final' in path_obj.stem.lower():
+                    extra_info = "final"
+                # Use parent directory for new filename
+                save_dir = path_obj.parent
+            else:
+                # No extension, treat as directory
+                save_dir = path_obj
+
+            # Create new filename with metadata
+            # Format: genetic_{input_size}_{hidden_size}_{output_size}_{extra_info}.pth
+            parts = ["genetic", str(input_size), str(hidden_size), str(output_size)]
+            if extra_info:
+                parts.append(extra_info)
+            new_filename = "_".join(parts) + ".pth"
+
+            filepath = save_dir / new_filename
+
+        # Ensure directory exists
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+
+        # Save the network state dict
+        torch.save(best_individual.network.state_dict(), filepath)
 
     def load_individual(self, filepath):
-        """Load a neural network into a new individual"""
+        # Load a neural network into a new individual
         individual = Individual(device=self.device)
         individual.network.load_state_dict(torch.load(filepath, map_location=self.device))
         return individual
 
 def train_genetic_algorithm(generations=50, population_size=50, games_per_eval=3,
                           verbose=True, num_threads=4, quiet=False, device=None):
-    """
-    Train a genetic algorithm to play Snake
-
-    Args:
-        generations: Number of generations to evolve
-        population_size: Size of population in each generation
-        games_per_eval: Number of games to play for fitness evaluation
-        verbose: Print detailed progress
-        num_threads: Number of threads for parallel evaluation
-        quiet: Minimal output mode
-        device: Device to run on (cuda/cpu)
-    """
+    # Train a genetic algorithm to play Snake
+    # Args:
+    #   generations: Number of generations to evolve
+    #   population_size: Size of population in each generation
+    #   games_per_eval: Number of games to play for fitness evaluation
+    #   verbose: Print detailed progress
+    #   num_threads: Number of threads for parallel evaluation
+    #   quiet: Minimal output mode
+    #   device: Device to run on (cuda/cpu)
     # Device setup
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -657,14 +692,15 @@ def train_genetic_algorithm(generations=50, population_size=50, games_per_eval=3
     ga = GeneticAlgorithm(population_size=population_size, num_threads=num_threads, device=device)
 
     if not quiet:
-        print(f"🧬 Genetic Algorithm Training")
+        print(f"Genetic Algorithm Training")
         print(f"Population: {population_size}, Generations: {generations}, Threads: {num_threads}")
         print(f"Device: {device}")
         print("=" * 60)
     else:
-        print(f"🧬 Training on {device} | Pop: {population_size} | Gen: {generations} | Threads: {num_threads}")
+        print(f"Training on {device} | Pop: {population_size} | Gen: {generations} | Threads: {num_threads}")
 
     start_time = time.time()
+    generation_times = []  # Track time per generation
 
     for gen in range(generations):
         gen_start = time.time()
@@ -689,7 +725,7 @@ def train_genetic_algorithm(generations=50, population_size=50, games_per_eval=3
 
         # Save best individual periodically
         if gen % 10 == 0:
-            ga.save_best(f'genetic_snake_gen_{gen}.pth')
+            ga.save_best(f'genetic/saved/genetic_snake_gen_{gen}.pth')
 
         # Evolve to next generation (except for the last generation)
         if gen < generations - 1:
@@ -697,15 +733,36 @@ def train_genetic_algorithm(generations=50, population_size=50, games_per_eval=3
 
         # Show generation summary
         gen_time = time.time() - gen_start
+        generation_times.append(gen_time)
         if not quiet and gen % 5 == 0:
             best_score = ga.best_score_history[-1]
             avg_score = ga.avg_score_history[-1]
             print(f"Generation {gen} complete: Best={best_score:.1f}, Avg={avg_score:.1f} ({gen_time:.1f}s)")
 
     # Save final best individual
-    ga.save_best('genetic_snake_final.pth')
+    ga.save_best('genetic/saved/genetic_snake_final.pth')
 
     elapsed_time = time.time() - start_time
+
+    # Store training statistics in ga object for later access
+    ga.training_stats = {
+        'total_generations': generations,
+        'population_size': population_size,
+        'games_per_eval': games_per_eval,
+        'total_time': elapsed_time,
+        'avg_generation_time': np.mean(generation_times) if generation_times else 0,
+        'min_generation_time': min(generation_times) if generation_times else 0,
+        'max_generation_time': max(generation_times) if generation_times else 0,
+        'generation_times': generation_times,
+        'final_best_score': ga.best_score_history[-1] if ga.best_score_history else 0,
+        'final_avg_score': ga.avg_score_history[-1] if ga.avg_score_history else 0,
+        'initial_best_score': ga.best_score_history[0] if ga.best_score_history else 0,
+        'initial_avg_score': ga.avg_score_history[0] if ga.avg_score_history else 0,
+        'best_fitness_history': ga.best_fitness_history,
+        'avg_fitness_history': ga.avg_fitness_history,
+        'best_score_history': ga.best_score_history,
+        'avg_score_history': ga.avg_score_history
+    }
 
     if not quiet:
         print(f"\nTraining completed in {elapsed_time:.1f} seconds")
@@ -714,8 +771,102 @@ def train_genetic_algorithm(generations=50, population_size=50, games_per_eval=3
 
     return ga
 
+def print_training_statistics(ga):
+    """Print comprehensive training statistics for genetic algorithm"""
+    if not hasattr(ga, 'training_stats'):
+        print("No training statistics available.")
+        return
+
+    stats = ga.training_stats
+    print("\n" + "=" * 60)
+    print("TRAINING STATISTICS")
+    print("=" * 60)
+
+    # Training configuration
+    print(f"\n--- Training Configuration ---")
+    print(f"Total Generations: {stats['total_generations']}")
+    print(f"Population Size: {stats['population_size']}")
+    print(f"Games per Evaluation: {stats['games_per_eval']}")
+    print(f"Total Evaluations: {stats['total_generations'] * stats['population_size'] * stats['games_per_eval']}")
+
+    # Time statistics
+    print(f"\n--- Time Statistics ---")
+    print(f"Total Training Time: {stats['total_time']:.2f} seconds ({stats['total_time']/60:.2f} minutes)")
+    print(f"Average Time per Generation: {stats['avg_generation_time']:.2f} seconds ({stats['avg_generation_time']/60:.2f} minutes)")
+    print(f"Average Time per Evaluation: {stats['avg_generation_time']/(stats['population_size'] * stats['games_per_eval']):.3f} seconds")
+
+    if stats['generation_times']:
+        print(f"\nGeneration Time Statistics:")
+        print(f"  Min Generation Time: {stats['min_generation_time']:.2f} seconds ({stats['min_generation_time']/60:.2f} minutes)")
+        print(f"  Max Generation Time: {stats['max_generation_time']:.2f} seconds ({stats['max_generation_time']/60:.2f} minutes)")
+
+    # Score statistics
+    print(f"\n--- Score Statistics ---")
+    print(f"Initial Best Score: {stats['initial_best_score']:.2f}")
+    print(f"Final Best Score: {stats['final_best_score']:.2f}")
+    print(f"Improvement: {stats['final_best_score'] - stats['initial_best_score']:.2f}")
+    print(f"\nInitial Average Score: {stats['initial_avg_score']:.2f}")
+    print(f"Final Average Score: {stats['final_avg_score']:.2f}")
+    print(f"Average Improvement: {stats['final_avg_score'] - stats['initial_avg_score']:.2f}")
+
+    if stats['best_score_history']:
+        print(f"\nBest Score Progression:")
+        print(f"  Best Generation Score: {max(stats['best_score_history']):.2f}")
+        print(f"  Average Best Score: {np.mean(stats['best_score_history']):.2f}")
+
+    if stats['avg_score_history']:
+        print(f"\nAverage Score Progression:")
+        print(f"  Best Generation Average: {max(stats['avg_score_history']):.2f}")
+        print(f"  Overall Average: {np.mean(stats['avg_score_history']):.2f}")
+
+    # Fitness statistics
+    if stats['best_fitness_history']:
+        print(f"\n--- Fitness Statistics ---")
+        print(f"Initial Best Fitness: {stats['best_fitness_history'][0]:.2f}")
+        print(f"Final Best Fitness: {stats['best_fitness_history'][-1]:.2f}")
+        print(f"Fitness Improvement: {stats['best_fitness_history'][-1] - stats['best_fitness_history'][0]:.2f}")
+        print(f"Best Fitness Achieved: {max(stats['best_fitness_history']):.2f}")
+
+    print("=" * 60)
+
+def plot_training_progress(ga, window=10):
+    """Plot the average scores across all generations with moving average"""
+    plt.figure(figsize=(10, 6))
+
+    generations = list(range(len(ga.avg_score_history)))
+
+    # Calculate moving average for all generations using a rolling window
+    if len(ga.avg_score_history) >= window:
+        moving_avg = [np.mean(ga.avg_score_history[i:i+window]) for i in range(len(ga.avg_score_history)-window+1)]
+        gen_numbers = list(range(window-1, len(ga.avg_score_history)))
+        plt.plot(gen_numbers, moving_avg, linewidth=2, label=f'Moving Average (window={window})', color='blue')
+
+    # Plot all average scores
+    plt.plot(generations, ga.avg_score_history, linewidth=1, alpha=0.5, label='Average Score', color='lightblue')
+
+    plt.title('Training Progress - Average Score per Generation', fontsize=14, fontweight='bold')
+    plt.xlabel('Generation', fontsize=12)
+    plt.ylabel('Average Score', fontsize=12)
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+def plot_epoch_max_scores(ga):
+    """Plot the max score per generation"""
+    plt.figure(figsize=(10, 6))
+    generations = list(range(len(ga.best_score_history)))
+    plt.plot(generations, ga.best_score_history, marker='o', linewidth=2, markersize=6, color='red', label='Best Score')
+    plt.title('Best Score per Generation', fontsize=14, fontweight='bold')
+    plt.xlabel('Generation', fontsize=12)
+    plt.ylabel('Best Score', fontsize=12)
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
 def plot_evolution_progress(ga):
-    """Plot the evolution progress over generations"""
+    # Plot the evolution progress over generations
     plt.figure(figsize=(15, 10))
 
     # Plot fitness evolution
@@ -760,7 +911,7 @@ def plot_evolution_progress(ga):
     plt.show()
 
 def test_genetic_individual(model_path, num_games=10, display=True, device=None):
-    """Test a saved genetic algorithm individual"""
+    # Test a saved genetic algorithm individual
     # Device setup
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -815,6 +966,9 @@ if __name__ == "__main__":
 
     # Train the genetic algorithm
     ga = train_genetic_algorithm(generations=30, population_size=30, games_per_eval=3, verbose=True)
+
+    # Print training statistics
+    print_training_statistics(ga)
 
     # Plot the evolution progress
     print("\nPlotting evolution progress...")

@@ -1,9 +1,6 @@
-"""
-Headless Training Script for PvP Snake AI
-
-Trains multiple snakes using genetic algorithm to compete against each other.
-Runs without rendering for maximum speed.
-"""
+# Headless Training Script for PvP Snake AI
+# Trains multiple snakes using genetic algorithm to compete against each other.
+# Runs without rendering for maximum speed.
 
 import sys
 import os
@@ -22,19 +19,16 @@ from ai.genetic_algorithm import GeneticAlgorithm
 
 def train_pvp_genetic_algorithm(generations=50, population_size=50, games_per_eval=3,
                                num_snakes=2, verbose=True, num_threads=4, quiet=False, device=None):
-    """
-    Train a genetic algorithm for PvP Snake gameplay
-
-    Args:
-        generations: Number of generations to evolve
-        population_size: Size of population in each generation
-        games_per_eval: Number of games to play for fitness evaluation
-        num_snakes: Number of snakes in each PvP game (2-4)
-        verbose: Print detailed progress
-        num_threads: Number of threads for parallel evaluation
-        quiet: Minimal output mode
-        device: Device to run on (cuda/cpu)
-    """
+    # Train a genetic algorithm for PvP Snake gameplay
+    # Args:
+    #   generations: Number of generations to evolve
+    #   population_size: Size of population in each generation
+    #   games_per_eval: Number of games to play for fitness evaluation
+    #   num_snakes: Number of snakes in each PvP game (2-4)
+    #   verbose: Print detailed progress
+    #   num_threads: Number of threads for parallel evaluation
+    #   quiet: Minimal output mode
+    #   device: Device to run on (cuda/cpu)
     # Device setup
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -107,7 +101,7 @@ def train_pvp_genetic_algorithm(generations=50, population_size=50, games_per_ev
 
 
 def plot_evolution_progress(ga):
-    """Plot the evolution progress over generations"""
+    # Plot the evolution progress over generations
     plt.figure(figsize=(15, 10))
 
     # Plot fitness evolution
@@ -153,7 +147,7 @@ def plot_evolution_progress(ga):
 
 
 def main():
-    """Main training function with configuration options"""
+    # Main training function with configuration options
     print("PvP Snake AI Training")
     print("=" * 50)
     print("Choose training mode:")

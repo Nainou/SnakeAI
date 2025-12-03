@@ -1,134 +1,58 @@
-from snake_game_genetic import train_genetic_algorithm, plot_evolution_progress, test_genetic_individual
+from snake_game_genetic import train_genetic_algorithm, plot_training_progress, plot_epoch_max_scores, print_training_statistics
 import sys
-import os
 import multiprocessing
+from pathlib import Path
 
 def get_optimal_threads():
     cpu_count = multiprocessing.cpu_count()
     return min(max(2, cpu_count - 1), 8)  # Leave 1 core free, max 8 threads
 
-def quick_train():
+if __name__ == "__main__":
+    # Example usage
+    print("Training Genetic Algorithm for Snake Game...")
+    print("=" * 50)
+
     import torch
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Check CUDA availability
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        print(f"✓ CUDA available - Using GPU: {torch.cuda.get_device_name(0)}")
+        print(f"  GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+    else:
+        device = torch.device("cpu")
+        print("  WARNING: CUDA not available - Running on CPU!")
+        print("   Training will be MUCH slower. Install PyTorch with CUDA support for GPU acceleration.")
+        print("   Check: python -c 'import torch; print(torch.cuda.is_available())'")
+
     threads = get_optimal_threads()
+    print(f"Threads: {threads}")
+    print()
 
-    print(f"Quick Training Mode")
-    print(f"Device: {device} | Threads: {threads}")
-
+    # Train the genetic algorithm
     ga = train_genetic_algorithm(
-        generations=30,
-        population_size=40,
-        games_per_eval=5,
+        generations=1500,
+        population_size=200,
+        games_per_eval=3,
         num_threads=threads,
         quiet=True,
-        verbose=False,
+        verbose=True,
         device=device
     )
 
-    print(f"Quick training complete! Best score: {ga.best_score_history[-1]:.1f}")
-    return ga
-
-def custom_train():
-    import torch
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    print("Custom Training Configuration")
-    print(f"Auto-detected device: {device}")
-
-    try:
-        generations = int(input("Generations (default 40): ") or "40")
-        population_size = int(input("Population size (default 50): ") or "50")
-        games_per_eval = int(input("Games per evaluation (default 5): ") or "5")
-        threads = int(input(f"Threads (default {get_optimal_threads()}): ") or str(get_optimal_threads()))
-        quiet = input("Quiet mode? (Y/n): ").strip().lower() != 'n'
-    except ValueError:
-        print("Invalid input, using defaults...")
-        generations, population_size, games_per_eval = 40, 50, 5
-        threads = get_optimal_threads()
-        quiet = True
-
-    total_evals = generations * population_size * games_per_eval
-    speed_multiplier = 10 if device.type == 'cuda' else 3  # GPU is ~3x faster than estimation
-
-    print(f"\nConfiguration:")
-    print(f"  Device: {device}")
-    print(f"  Generations: {generations}")
-    print(f"  Population: {population_size}")
-    print(f"  Games/eval: {games_per_eval}")
-    print(f"  Threads: {threads}")
-    print(f"  Total evaluations: {total_evals}")
-    print(f"  Estimated time: ~{total_evals / (threads * speed_multiplier):.1f} minutes")
-
-    confirm = input("\nStart training? (y/N): ").strip().lower()
-    if confirm != 'y':
-        print("Training cancelled.")
-        return None
-
-    ga = train_genetic_algorithm(
-        generations=generations,
-        population_size=population_size,
-        games_per_eval=games_per_eval,
-        num_threads=threads,
-        quiet=quiet,
-        verbose=not quiet,
-        device=device
-    )
-
-    print(f"Training complete! Best score: {ga.best_score_history[-1]:.1f}")
-    return ga
-
-def main():
-    print("Genetic Algorithm Snake AI Training")
-    print("=" * 50)
-    print("Choose training mode:")
-    print("1. Quick train (15 gens, 20 pop, fast)")
-    print("2. Custom configuration")
-    print("3. Test existing model")
-
-    choice = input("\nChoice (1-3): ").strip()
-
-    ga = None
-    if choice == "1":
-        ga = quick_train()
-    elif choice == "2":
-        ga = custom_train()
-    elif choice == "3":
-        if os.path.exists('genetic_snake_final.pth'):
-            print("🎮 Testing existing model...")
-            test_genetic_individual('genetic_snake_final.pth', num_games=5, display=True)
-        else:
-            print("No trained model found. Train one first!")
-        return
+    # Get the actual saved filename
+    saved_dir = Path('genetic/saved')
+    final_models = list(saved_dir.glob('genetic_*_final.pth'))
+    if final_models:
+        print(f"\nModel saved as '{final_models[0].name}'")
     else:
-        print("Invalid choice, using quick train...")
-        ga = quick_train()
+        print("\nModel saved (check genetic/saved/ directory)")
 
-    if ga is None:
-        return
+    # Print training statistics
+    print_training_statistics(ga)
 
-    # Post-training options
-    print(f"\nResults: Best={ga.best_score_history[-1]:.1f}, "
-          f"Improvement={ga.best_score_history[-1] - ga.best_score_history[0]:.1f}")
+    # Plot training progress (moving average)
+    plot_training_progress(ga)
 
-    # Plot evolution progress
-    plot_choice = input("Show evolution plots? (y/N): ").strip().lower()
-    if plot_choice == 'y':
-        plot_evolution_progress(ga)
-
-    # Test the best individual
-    test_choice = input("Test best individual? (y/N): ").strip().lower()
-    if test_choice == 'y':
-        print("🎮 Testing best individual...")
-        test_genetic_individual('genetic_snake_final.pth', num_games=5, display=True)
-
-    print("\nAll done! Use 'python test.py' to test anytime.")
-
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\n\nTraining interrupted by user.")
-        sys.exit(1)
-    except Exception as e:
-        print(f"\nError: {e}")
-        sys.exit(1)
+    # Plot max scores per generation
+    plot_epoch_max_scores(ga)

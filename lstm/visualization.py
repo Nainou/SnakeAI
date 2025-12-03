@@ -10,11 +10,9 @@ import pygame
 
 class DQN(nn.Module):
     def __init__(self, input_size=21, hidden_size=128, output_size=3):
-        """
-        Deep Q-Network for Snake Game
-        Input: State vector of size 21
-        Output: Q-values for 3 actions (straight, turn right, turn left)
-        """
+        # Deep Q-Network for Snake Game
+        # Input: State vector of size 21
+        # Output: Q-values for 3 actions (straight, turn right, turn left)
         super(DQN, self).__init__()
         self.fc1 = nn.Linear(input_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
@@ -72,15 +70,15 @@ class DQNAgent:
         self.losses = []
 
     def update_target_network(self):
-        """Copy weights from main network to target network"""
+        # Copy weights from main network to target network
         self.target_network.load_state_dict(self.q_network.state_dict())
 
     def remember(self, state, action, reward, next_state, done):
-        """Store experience in replay buffer"""
+        # Store experience in replay buffer
         self.memory.append((state, action, reward, next_state, done))
 
     def act(self, state, return_activations=False):
-        """Choose action using epsilon-greedy policy"""
+        # Choose action using epsilon-greedy policy
         if random.random() <= self.epsilon:
             action = random.randrange(self.action_size)
             if return_activations:
@@ -112,7 +110,7 @@ class DQNAgent:
         return action
 
     def replay(self, batch_size=32):
-        """Train the model on a batch of experiences"""
+        # Train the model on a batch of experiences
         if len(self.memory) < batch_size:
             return
 
@@ -141,7 +139,7 @@ class DQNAgent:
             self.epsilon *= self.epsilon_decay
 
     def save(self, filepath):
-        """Save model weights"""
+        # Save model weights
         torch.save({
             'q_network_state_dict': self.q_network.state_dict(),
             'target_network_state_dict': self.target_network.state_dict(),
@@ -150,7 +148,7 @@ class DQNAgent:
         }, filepath)
 
     def load(self, filepath):
-        """Load model weights"""
+        # Load model weights
         checkpoint = torch.load(filepath, map_location=self.device)
         self.q_network.load_state_dict(checkpoint['q_network_state_dict'])
         self.target_network.load_state_dict(checkpoint['target_network_state_dict'])
@@ -174,7 +172,7 @@ class NeuralNetworkVisualizer:
         self.small_font_size = 12
 
     def draw_network(self, surface, activations, state_values, action=None):
-        """Draw the neural network with activations"""
+        # Draw the neural network with activations
         network_rect = pygame.Rect(0, 0, self.width, self.height)
         pygame.draw.rect(surface, self.colors['background'], network_rect)
 
@@ -380,7 +378,7 @@ class SnakeGameWithNNVisualization:
         self.square_size = game_width // grid_size
 
     def render_game(self, state_values):
-        """Render the snake game on the left surface"""
+        # Render the snake game on the left surface
         self.game_surface.fill(self.WHITE)
 
         # Draw grid lines
@@ -426,7 +424,7 @@ class SnakeGameWithNNVisualization:
 
 
     def run_with_agent(self, agent, num_games=5, fps=10):
-        """Run the game with neural network visualization"""
+        # Run the game with neural network visualization
         agent.epsilon = 0  # No exploration during visualization
 
         for game_num in range(num_games):
@@ -491,7 +489,7 @@ class SnakeGameWithNNVisualization:
         pygame.quit()
 
 def visualize_trained_agent(model_path, grid_size=10, num_games=3):
-    """Load a trained agent and visualize it playing"""
+    # Load a trained agent and visualize it playing
     # Create agent
     agent = DQNAgent(state_size=17, action_size=3)
 

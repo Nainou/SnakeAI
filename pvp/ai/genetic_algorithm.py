@@ -8,7 +8,7 @@ from .neural_network import NeuralNetwork
 
 
 class Individual:
-    """Represents one individual in the genetic algorithm population"""
+    # Represents one individual in the genetic algorithm population
 
     def __init__(self, input_size=17, hidden_size=64, output_size=3, device=None):
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -22,21 +22,21 @@ class Individual:
         self.avg_position = 0  # Average finishing position in PvP games
 
     def act(self, state):
-        """Get action from the neural network"""
+        # Get action from the neural network
         with torch.no_grad():
             state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
             output = self.network(state_tensor)
             return output.argmax().item()
 
     def get_weights(self):
-        """Extract all weights and biases as a flat numpy array"""
+        # Extract all weights and biases as a flat numpy array
         weights = []
         for param in self.network.parameters():
             weights.extend(param.data.flatten().cpu().numpy())
         return np.array(weights)
 
     def set_weights(self, weights):
-        """Set all weights and biases from a flat numpy array"""
+        # Set all weights and biases from a flat numpy array
         idx = 0
         for param in self.network.parameters():
             param_shape = param.shape
@@ -45,7 +45,7 @@ class Individual:
             idx += param_size
 
     def copy(self):
-        """Create a deep copy of this individual"""
+        # Create a deep copy of this individual
         new_individual = Individual(device=self.device)
         new_individual.network.load_state_dict(self.network.state_dict())
         new_individual.fitness = self.fitness
@@ -53,22 +53,19 @@ class Individual:
 
 
 class GeneticAlgorithm:
-    """Genetic Algorithm for evolving PvP Snake AI"""
+    # Genetic Algorithm for evolving PvP Snake AI
 
     def __init__(self, population_size=50, mutation_rate=0.15, crossover_rate=0.8,
                  elitism_ratio=0.15, tournament_size=5, num_threads=4, device=None):
-        """
-        Initialize the genetic algorithm
-
-        Args:
-            population_size: Number of individuals in each generation
-            mutation_rate: Probability of mutation for each weight
-            crossover_rate: Probability of crossover between parents
-            elitism_ratio: Fraction of best individuals to keep unchanged
-            tournament_size: Number of individuals in tournament selection
-            num_threads: Number of threads for parallel evaluation
-            device: Device to run neural networks on (cuda/cpu)
-        """
+        # Initialize the genetic algorithm
+        # Args:
+        #   population_size: Number of individuals in each generation
+        #   mutation_rate: Probability of mutation for each weight
+        #   crossover_rate: Probability of crossover between parents
+        #   elitism_ratio: Fraction of best individuals to keep unchanged
+        #   tournament_size: Number of individuals in tournament selection
+        #   num_threads: Number of threads for parallel evaluation
+        #   device: Device to run neural networks on (cuda/cpu)
         self.population_size = population_size
         self.mutation_rate = mutation_rate
         self.crossover_rate = crossover_rate
@@ -93,7 +90,7 @@ class GeneticAlgorithm:
         self.print_lock = Lock()
 
     def evaluate_individual_worker(self, args):
-        """Worker function for threaded evaluation of PvP games"""
+        # Worker function for threaded evaluation of PvP games
         individual, game_class, num_games, individual_id, num_snakes = args
 
         total_score = 0
@@ -181,7 +178,7 @@ class GeneticAlgorithm:
         return individual_id, fitness, avg_score, avg_position
 
     def evaluate_population(self, game_class, num_games=3, num_snakes=2, verbose=False, progress_callback=None):
-        """Evaluate the entire population's fitness using threading"""
+        # Evaluate the entire population's fitness using threading
         start_time = time.time()
 
         if verbose:
@@ -228,12 +225,12 @@ class GeneticAlgorithm:
                   f"Fitness={fitnesses[0]:.0f}, Pos={self.population[0].avg_position:.1f} ({eval_time:.1f}s)")
 
     def tournament_selection(self):
-        """Select an individual using tournament selection"""
+        # Select an individual using tournament selection
         tournament = random.sample(self.population, self.tournament_size)
         return max(tournament, key=lambda x: x.fitness)
 
     def crossover(self, parent1, parent2):
-        """Create two offspring through crossover"""
+        # Create two offspring through crossover
         if random.random() > self.crossover_rate:
             return parent1.copy(), parent2.copy()
 
@@ -256,7 +253,7 @@ class GeneticAlgorithm:
         return offspring1, offspring2
 
     def mutate(self, individual):
-        """Enhanced mutation with adaptive noise"""
+        # Enhanced mutation with adaptive noise
         weights = individual.get_weights()
 
         # Adaptive mutation strength based on generation
@@ -278,7 +275,7 @@ class GeneticAlgorithm:
         individual.set_weights(weights)
 
     def evolve_generation(self):
-        """Create the next generation using genetic operations"""
+        # Create the next generation using genetic operations
         new_population = []
 
         # Elitism: keep the best individuals
@@ -313,17 +310,62 @@ class GeneticAlgorithm:
         self.generation += 1
 
     def get_best_individual(self):
-        """Get the best individual from current population"""
+        # Get the best individual from current population
         return self.population[0] if self.population else None
 
-    def save_best(self, filepath):
-        """Save the best individual's network"""
+    def save_best(self, filepath, include_metadata=True):
+        # Save the best individual's network
+        # Args:
+        #   filepath: Path to save the model
+        #   include_metadata: If True, include architecture metadata in filename
         best_individual = self.get_best_individual()
         if best_individual:
+            # Extract architecture info from network
+            if include_metadata:
+                input_size = best_individual.network.fc1.in_features
+                hidden_size = best_individual.network.fc1.out_features
+                output_size = best_individual.network.fc4.out_features
+
+                # Try to parse existing filename for extra info
+                from pathlib import Path
+                import re
+                import sys
+
+                # Try to import metadata utilities (may not be available)
+                try:
+                    sys.path.append(str(Path(__file__).parent.parent.parent))
+                    from demo.demo import parse_model_filename, create_model_filename
+
+                    path_obj = Path(filepath)
+                    existing_meta = parse_model_filename(path_obj.name)
+                    extra_info = existing_meta.extra_info if existing_meta else ""
+
+                    # If no extra info and filename contains 'gen' or 'final', extract it
+                    if not extra_info:
+                        if 'gen' in path_obj.stem.lower():
+                            gen_match = re.search(r'gen[_\s]*(\d+)', path_obj.stem.lower())
+                            if gen_match:
+                                extra_info = f"gen{gen_match.group(1)}"
+                        elif 'final' in path_obj.stem.lower():
+                            extra_info = "final"
+
+                    # Create new filename with metadata
+                    new_filename = create_model_filename(
+                        model_type="pvp",
+                        input_size=input_size,
+                        hidden_size=hidden_size,
+                        output_size=output_size,
+                        extra_info=extra_info
+                    )
+                    filepath = path_obj.parent / new_filename
+                except ImportError:
+                    # If metadata module not available, just save with original filename
+                    pass
+
             torch.save(best_individual.network.state_dict(), filepath)
 
     def load_individual(self, filepath):
-        """Load a neural network into a new individual"""
+        # Load a neural network into a new individual
         individual = Individual(device=self.device)
         individual.network.load_state_dict(torch.load(filepath, map_location=self.device))
         return individual

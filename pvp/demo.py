@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
-"""
-PvP Snake AI Demo
-
-Quick demonstration of the PvP snake game with random AI.
-"""
+# PvP Snake AI Demo
+# Quick demonstration of the PvP snake game with random AI.
 
 import sys
 import time
@@ -18,7 +15,7 @@ from ai.neural_network import NeuralNetwork
 
 
 def random_ai_demo():
-    """Demo with random AI snakes"""
+    # Demo with random AI snakes
     print("PvP Snake AI Demo - Random AI")
     print("=" * 40)
 
@@ -69,7 +66,7 @@ def random_ai_demo():
 
 
 def main():
-    """Main demo function"""
+    # Main demo function
     try:
         random_ai_demo()
     except KeyboardInterrupt:

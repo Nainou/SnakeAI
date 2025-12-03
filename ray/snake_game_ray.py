@@ -170,7 +170,7 @@ class SnakeGameRL:
         return np.array(state, dtype=np.float32)
 
     def get_action_from_direction(self, new_direction):
-        """Convert absolute direction to relative action (straight, left, right)"""
+        # Convert absolute direction to relative action (straight, left, right)
         current_idx = Direction.get_index(self.direction)
         new_idx = Direction.get_index(new_direction)
 
@@ -187,8 +187,8 @@ class SnakeGameRL:
             return 0  # Keep going straight
 
     def step(self, action):
-        """Execute one game step with given action
-        Action: 0 = straight, 1 = turn right, 2 = turn left"""
+        # Execute one game step with given action
+        # Action: 0 = straight, 1 = turn right, 2 = turn left
 
         if self.done:
             return self.get_state(), 0, True, {}
@@ -317,12 +317,12 @@ class SnakeGameRL:
             self.clock.tick(self.render_delay)
 
     def close(self):
-        """Close the pygame window"""
+        # Close the pygame window
         if self.display:
             pygame.quit()
 
     def get_state_size(self):
-        """Return the size of the state vector"""
+        # Return the size of the state vector
         return 21  # 2 food dir + 4 current dir + 8 dangers + 2 distances + 1 length + 4 tail direction
 
 class SnakeTrainer:
@@ -331,7 +331,7 @@ class SnakeTrainer:
         self.game = SnakeGameRL(grid_size=grid_size, display=False)
 
     def evaluate_agent(self, agent_func, num_episodes=100, verbose=False):
-        """Evaluate an agent function that takes state and returns action"""
+        # Evaluate an agent function that takes state and returns action
         scores = []
         wins = 0
 

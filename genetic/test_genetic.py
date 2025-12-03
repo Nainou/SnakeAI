@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Test script for the genetic algorithm with pygame visualization
-"""
+# Test script for the genetic algorithm with pygame visualization
 
 import sys
 import os

@@ -1,8 +1,5 @@
-"""
-Individual Snake class for PvP Snake game.
-
-Each snake has its own position, direction, color, and neural network.
-"""
+# Individual Snake class for PvP Snake game.
+# Each snake has its own position, direction, color, and neural network.
 
 import numpy as np
 from enum import Enum
@@ -23,7 +20,7 @@ class Direction(Enum):
 
 
 class Snake:
-    """Individual snake in the PvP game"""
+    # Individual snake in the PvP game
 
     def __init__(self, snake_id, start_pos, color, grid_size, device=None):
         self.snake_id = snake_id
@@ -43,11 +40,11 @@ class Snake:
         self.network = None
 
     def set_network(self, network):
-        """Set the neural network for this snake"""
+        # Set the neural network for this snake
         self.network = network
 
     def get_state(self, food_position, other_snakes):
-        """Get the current state for this snake's neural network"""
+        # Get the current state for this snake's neural network
         if not self.alive:
             return np.zeros(17, dtype=np.float32)
 
@@ -112,18 +109,24 @@ class Snake:
 
         return np.array(state, dtype=np.float32)
 
-    def act(self, state):
-        """Get action from the neural network"""
+    def act(self, state, return_activations=False):
+        # Get action from the neural network
         if not self.alive or self.network is None:
+            if return_activations:
+                # Return dummy activations
+                dummy_activations = {
+                    'fc1': torch.zeros(64),
+                    'fc2': torch.zeros(64),
+                    'fc3': torch.zeros(32),
+                    'output': torch.zeros(3)
+                }
+                return 0, dummy_activations
             return 0  # Default action: go straight
 
-        with torch.no_grad():
-            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
-            output = self.network(state_tensor)
-            return output.argmax().item()
+        return self.network.act(state, return_activations=return_activations)
 
     def move(self, action, food_position, other_snakes):
-        """Move the snake based on action and check for collisions"""
+        # Move the snake based on action and check for collisions
         if not self.alive:
             return False, 0
 
@@ -197,7 +200,7 @@ class Snake:
         return True, reward
 
     def reset(self, start_pos):
-        """Reset snake to initial state"""
+        # Reset snake to initial state
         self.positions = deque([start_pos])
         self.direction = Direction.RIGHT
         self.alive = True

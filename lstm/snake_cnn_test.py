@@ -320,7 +320,7 @@ class CNNDQNAgent:
 def train_cnn_agent(
     episodes: int = 800,
     action_size: int = 3,
-    print_every: int = 10,
+    print_every: int = 100,
 ):
     game = SnakeGameRL(display=False)
 
@@ -423,6 +423,6 @@ def test_cnn_agent(agent: CNNDQNAgent, num_games: int = 5, render_delay: int = 5
 # =========================
 if __name__ == "__main__":
     print("Training non-recurrent CNN DQN on SnakeGameRL object-feature maps...")
-    agent = train_cnn_agent(episodes=10000, action_size=3)
+    agent = train_cnn_agent(episodes=2000, action_size=3)
     print("Testing trained CNN agent...")
     test_cnn_agent(agent, num_games=5, render_delay=5)

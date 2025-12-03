@@ -47,9 +47,8 @@ SAVE_PATH = "saved/snake_drqn_cnn_objects.pth"
 # Utils for obs handling
 # =========================
 def maps_to_chw_numpy(maps_t: torch.Tensor) -> np.ndarray:
-    """
-    Accepts a torch tensor [C,H,W] of floats (0/1); returns numpy float32 [C,H,W].
-    """
+    # Accepts a torch tensor [C,H,W] of floats (0/1); returns numpy float32 [C,H,W].
+    # Accepts a torch tensor [C,H,W] of floats (0/1); returns numpy float32 [C,H,W].
     if not isinstance(maps_t, torch.Tensor):
         raise TypeError("state_maps must be a torch.Tensor [C,H,W]")
     maps_t = maps_t.detach().to("cpu").float()
@@ -58,9 +57,8 @@ def maps_to_chw_numpy(maps_t: torch.Tensor) -> np.ndarray:
 
 
 def extras_to_numpy(extra_t: torch.Tensor) -> np.ndarray:
-    """
-    Accepts a torch tensor [8]; returns numpy float32 [8].
-    """
+    # Accepts a torch tensor [8]; returns numpy float32 [8].
+    # Accepts a torch tensor [8]; returns numpy float32 [8].
     if not isinstance(extra_t, torch.Tensor):
         raise TypeError("extra_information must be a torch.Tensor [9]")
     extra_t = extra_t.detach().to("cpu").float()
@@ -72,11 +70,12 @@ def extras_to_numpy(extra_t: torch.Tensor) -> np.ndarray:
 # Networks
 # =========================
 class CNNCoordEncoder(nn.Module):
-    """
-    CNN with CoordConv on top of 5-channel binary maps. We add 2 coordinate channels (x,y),
-    keep stride=1 and no pooling to retain the 10x10 resolution, then flatten and project.
-    Returns embedding per frame; extra_information is projected and concatenated outside.
-    """
+    # CNN with CoordConv on top of 5-channel binary maps. We add 2 coordinate channels (x,y),
+    # keep stride=1 and no pooling to retain the 10x10 resolution, then flatten and project.
+    # Returns embedding per frame; extra_information is projected and concatenated outside.
+    # CNN with CoordConv on top of 5-channel binary maps. We add 2 coordinate channels (x,y),
+    # keep stride=1 and no pooling to retain the 10x10 resolution, then flatten and project.
+    # Returns embedding per frame; extra_information is projected and concatenated outside.
     def __init__(self, in_channels: int, grid_h: int, grid_w: int, emb_size: int = EMB_SIZE):
         super().__init__()
         self.h = grid_h
@@ -111,10 +110,10 @@ class CNNCoordEncoder(nn.Module):
         return self._xs.expand(B, T, 1, H, W), self._ys.expand(B, T, 1, H, W)
 
     def forward(self, maps_btchw: torch.Tensor) -> torch.Tensor:
-        """
-        maps_btchw: [B, T, C, H, W] float
-        returns: [B*T, emb_size]
-        """
+        # maps_btchw: [B, T, C, H, W] float
+        # returns: [B*T, emb_size]
+        # maps_btchw: [B, T, C, H, W] float
+        # returns: [B*T, emb_size]
         B, T, C, H, W = maps_btchw.shape
         xs, ys = self._coord_channels(maps_btchw)
         x = torch.cat([maps_btchw, xs, ys], dim=2)  # [B,T,C+2,H,W]
@@ -125,11 +124,12 @@ class CNNCoordEncoder(nn.Module):
 
 
 class DRQNCore(nn.Module):
-    """
-    CNNCoordEncoder(maps) + MLP(extras) -> concat -> LSTM -> Dueling Q-head.
-    Input per step: (maps: [C,H,W], extras: [8])
-    Batched over time: maps [B,T,C,H,W], extras [B,T,8]
-    """
+    # CNNCoordEncoder(maps) + MLP(extras) -> concat -> LSTM -> Dueling Q-head.
+    # Input per step: (maps: [C,H,W], extras: [8])
+    # Batched over time: maps [B,T,C,H,W], extras [B,T,8]
+    # CNNCoordEncoder(maps) + MLP(extras) -> concat -> LSTM -> Dueling Q-head.
+    # Input per step: (maps: [C,H,W], extras: [8])
+    # Batched over time: maps [B,T,C,H,W], extras [B,T,8]
     def __init__(self, c_in: int, grid_h: int, grid_w: int, action_size: int,
                  hidden_size: int = HIDDEN_SIZE, emb_size: int = EMB_SIZE, emb_extra: int = EMB_EXTRA):
         super().__init__()
@@ -163,10 +163,10 @@ class DRQNCore(nn.Module):
         )
 
     def forward(self, maps_btchw: torch.Tensor, extras_bt8: torch.Tensor, hidden=None):
-        """
-        maps_btchw: [B,T,C,H,W]; extras_bt8: [B,T,8]
-        returns: q [B,T,A], hidden
-        """
+        # maps_btchw: [B,T,C,H,W]; extras_bt8: [B,T,8]
+        # returns: q [B,T,A], hidden
+        # maps_btchw: [B,T,C,H,W]; extras_bt8: [B,T,8]
+        # returns: q [B,T,A], hidden
         B, T, C, H, W = maps_btchw.shape
         z_maps = self.cnn(maps_btchw)                  # [B*T, emb]
         z_maps = z_maps.view(B, T, -1)                 # [B,T,emb]
@@ -186,11 +186,12 @@ class DRQNCore(nn.Module):
 # Replay (episode-wise)
 # =========================
 class EpisodeBuffer:
-    """
-    Stores complete episodes. Each item:
-      (maps[C,H,W], extras[8], action, reward, next_maps[C,H,W], next_extras[8], done)
-    All arrays are numpy float32 (maps: [C,H,W], extras: [8])
-    """
+    # Stores complete episodes. Each item:
+    #   (maps[C,H,W], extras[8], action, reward, next_maps[C,H,W], next_extras[8], done)
+    # All arrays are numpy float32 (maps: [C,H,W], extras: [8])
+    # Stores complete episodes. Each item:
+    #   (maps[C,H,W], extras[8], action, reward, next_maps[C,H,W], next_extras[8], done)
+    # All arrays are numpy float32 (maps: [C,H,W], extras: [8])
     def __init__(self, capacity_episodes=REPLAY_EPISODES):
         self.capacity = capacity_episodes
         self.episodes: deque = deque(maxlen=capacity_episodes)
@@ -322,9 +323,7 @@ class DRQNAgent:
         return q_seq.squeeze(0).squeeze(0)
 
     def act(self, obs_tuple) -> int:
-        """
-        obs_tuple = (state_maps [C,H,W] torch, extra_information [9] torch)
-        """
+        # obs_tuple = (state_maps [C,H,W] torch, extra_information [8] torch)
         state_maps_t, extra_info_t = obs_tuple
         maps_chw = maps_to_chw_numpy(state_maps_t)
         extras_9 = extras_to_numpy(extra_info_t)

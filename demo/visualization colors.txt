@@ -1,0 +1,7 @@
+Neuron Colors
+blue - neuron_inactive — confidence < 0.1
+light blue - neuron_low  — 0.1–0.3
+bright blue - neuron_medium — 0.3–0.5
+orange - neuron_high — 0.5–0.8
+red - neuron_very_high —  0.8
+green - selected — the chosen output action
