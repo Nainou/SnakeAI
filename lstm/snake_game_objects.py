@@ -23,8 +23,8 @@ class SnakeGameRL:
         self.render_delay = render_delay
         self.last_food_step = 0  # Track steps since last food eaten
 
-        self.loop_decay = 0.95        # how fast previous visits fade (0.90–0.99)
-        self.loop_beta  = 0.2        # penalty strength per revisit
+        self.loop_decay = 0.90        # how fast previous visits fade (0.90–0.99)
+        self.loop_beta  = 0.005        # penalty strength per revisit
         self.visit_heat = torch.zeros((self.grid_size, self.grid_size), dtype=torch.float32)
 
 
@@ -53,6 +53,7 @@ class SnakeGameRL:
         initial_positions = [(self.grid_size // 2, self.grid_size // 2), (self.grid_size // 2 - 1, self.grid_size // 2), (self.grid_size // 2 - 2, self.grid_size // 2), (self.grid_size // 2 - 3, self.grid_size // 2)]
         self.snake_positions = deque(initial_positions)
         self.direction = Direction.RIGHT
+        self.timeout_limit = 200
 
         # Food initialization
         self.food_position = self._place_food()
@@ -153,7 +154,10 @@ class SnakeGameRL:
             # For single segment snake, use current direction
             tail_dir_one_hot[Direction.get_index(self.direction)] = 1
 
-        extra_information = torch.cat([dir_onehot, tail_dir_one_hot])
+        # normalized steps since last food, clipped
+        hunger = torch.tensor([min(1.0, (self.steps - self.last_food_step) / self.timeout_limit)])
+
+        extra_information = torch.cat([dir_onehot, tail_dir_one_hot, hunger])
 
         return (state_maps, extra_information)
 
@@ -201,13 +205,15 @@ class SnakeGameRL:
             head[1] + self.direction.value[1]
         )
 
+        hx, hy = new_head
+
         # Check collisions
         reward = 0
         if (new_head[0] < 0 or new_head[0] >= self.grid_size or
             new_head[1] < 0 or new_head[1] >= self.grid_size or
             new_head in self.snake_positions):
             self.done = True
-            reward = -50  # Big penalty for dying
+            reward = -10  # Big penalty for dying
             return self.get_state(), reward, True, {'score': self.score}
 
         # Move snake
@@ -217,7 +223,7 @@ class SnakeGameRL:
         if new_head == self.food_position:
             self.score += 1
             self.last_food_step = self.steps  # Reset food step counter
-            reward = 30  # Big reward for eating food
+            reward = 5  # Big reward for eating food
 
             # Place new food
             self.food_position = self._place_food()
@@ -233,9 +239,9 @@ class SnakeGameRL:
             # Small reward/penalty based on distance to food
             new_distance = self._calculate_distance_to_food()
             if new_distance < self.distance_to_food:
-                reward = 1  # Getting closer to food (increased reward)
+                reward = 0.2  # Getting closer to food (increased reward)
             elif new_distance > self.distance_to_food:
-                reward = -1  # Getting farther from food
+                reward = -0.2  # Getting farther from food
             self.distance_to_food = new_distance
 
         # Check if exceeded max steps (to prevent infinite loops)
@@ -243,14 +249,15 @@ class SnakeGameRL:
             self.done = True
 
         # Dynamic timeout based on snake length - longer snakes need more time
-        timeout_limit = max(200, len(self.snake_positions) * 10)
-        if self.steps - self.last_food_step >= timeout_limit:
+        self.timeout_limit = max(200, len(self.snake_positions) * 10)
+        
+        if self.steps - self.last_food_step >= self.timeout_limit:
             self.done = True
-            reward = -100  # Big penalty for not eating
+            reward = -50  # Big penalty for not eating
 
         # --- loop penalty (decaying heatmap) ---
         # penalty is proportional to how recently/often we've been here
-        prev_heat = float(self.visit_heat[head[0], head[1]].item())
+        prev_heat = float(self.visit_heat[hy, hx].item())
         loop_penalty = - self.loop_beta * prev_heat
 
         # apply to reward (keep it small so it doesn’t overpower food/death)
@@ -258,7 +265,7 @@ class SnakeGameRL:
 
         # decay the whole map and stamp the new head position
         self.visit_heat.mul_(self.loop_decay)
-        self.visit_heat[head[0], head[1]] += 1.0
+        self.visit_heat[hy, hx] += 1.0
 
         reward -= 0.01  # Much smaller per-step penalty to allow longer games
         

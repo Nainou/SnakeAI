@@ -19,24 +19,24 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Replay / sequences
 REPLAY_EPISODES = 800
-SEQ_LEN = 8
-BURN_IN = 0
+SEQ_LEN = 16
+BURN_IN = 4
 BATCH_SIZE = 32
 
 # Optimization
 GAMMA = 0.98
 LR = 1e-3
-WEIGHT_DECAY = 1e-5
+WEIGHT_DECAY = 1e-6
 GRAD_CLIP = 1.0
-HIDDEN_SIZE = 64
-EMB_SIZE = 64
-EMB_EXTRA = 64       # projection size for the 8-d extra_information
+HIDDEN_SIZE = 128
+EMB_SIZE = 128
+EMB_EXTRA = 128       # projection size for the 8-d extra_information
 TAU = 0.05          # soft target update (Polyak)
 
 # Exploration
 EPS_START = 1.0
 EPS_END = 0.01
-EPS_DECAY = 0.999
+EPS_DECAY = 0.995
 
 # Logging
 PRINT_EVERY = 10
@@ -62,9 +62,9 @@ def extras_to_numpy(extra_t: torch.Tensor) -> np.ndarray:
     Accepts a torch tensor [8]; returns numpy float32 [8].
     """
     if not isinstance(extra_t, torch.Tensor):
-        raise TypeError("extra_information must be a torch.Tensor [8]")
+        raise TypeError("extra_information must be a torch.Tensor [9]")
     extra_t = extra_t.detach().to("cpu").float()
-    assert extra_t.ndim == 1 and extra_t.shape[0] == 8, f"extra_information must be [8], got {tuple(extra_t.shape)}"
+    assert extra_t.ndim == 1 and extra_t.shape[0] == 9, f"extra_information must be [9], got {tuple(extra_t.shape)}"
     return extra_t.numpy().astype(np.float32)
 
 
@@ -84,13 +84,13 @@ class CNNCoordEncoder(nn.Module):
         self.in_channels = in_channels + 2  # +2 for coord channels
 
         self.conv = nn.Sequential(
-            nn.Conv2d(self.in_channels, 8, kernel_size=3, padding=1), nn.ReLU(),
-            nn.Conv2d(8, 16, kernel_size=3, padding=1), nn.ReLU(),
-            nn.Conv2d(16, 32, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Conv2d(self.in_channels, 32, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Conv2d(64, 128, kernel_size=3, padding=1), nn.ReLU(),
         )
         self.proj = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(32 * grid_h * grid_w, emb_size),
+            nn.Linear(128 * grid_h * grid_w, emb_size),
             nn.ReLU(),
         )
 
@@ -138,7 +138,7 @@ class DRQNCore(nn.Module):
 
         self.cnn = CNNCoordEncoder(c_in, grid_h, grid_w, emb_size=emb_size)
         self.extra_mlp = nn.Sequential(
-            nn.Linear(8, emb_extra),
+            nn.Linear(9, emb_extra),
             nn.ReLU(),
         )
 
@@ -233,8 +233,8 @@ class EpisodeBuffer:
         # Prepare arrays
         maps_arr = np.zeros((batch_size, seq_len, c_in, h, w), dtype=np.float32)
         nxt_maps_arr = np.zeros((batch_size, seq_len, c_in, h, w), dtype=np.float32)
-        extras_arr = np.zeros((batch_size, seq_len, 8), dtype=np.float32)
-        nxt_extras_arr = np.zeros((batch_size, seq_len, 8), dtype=np.float32)
+        extras_arr = np.zeros((batch_size, seq_len, 9), dtype=np.float32)
+        nxt_extras_arr = np.zeros((batch_size, seq_len, 9), dtype=np.float32)
         actions_arr = np.zeros((batch_size, seq_len), dtype=np.int64)
         rewards_arr = np.zeros((batch_size, seq_len), dtype=np.float32)
         dones_arr = np.zeros((batch_size, seq_len), dtype=np.float32)
@@ -248,10 +248,10 @@ class EpisodeBuffer:
             else:
                 used = seq + [(
                     np.zeros((c_in, h, w), dtype=np.float32),
-                    np.zeros((8,), dtype=np.float32),
+                    np.zeros((9,), dtype=np.float32),
                     0, 0.0,
                     np.zeros((c_in, h, w), dtype=np.float32),
-                    np.zeros((8,), dtype=np.float32),
+                    np.zeros((9,), dtype=np.float32),
                     1.0
                 )] * (seq_len - T)
                 mask = np.array([1.0] * T + [0.0] * (seq_len - T), dtype=np.float32)
@@ -311,27 +311,27 @@ class DRQNAgent:
         c = torch.zeros(1, batch_size, HIDDEN_SIZE, device=DEVICE)
         self.hidden = (h, c)
 
-    def _forward_step(self, maps_chw: np.ndarray, extras_8: np.ndarray) -> torch.Tensor:
+    def _forward_step(self, maps_chw: np.ndarray, extras_9: np.ndarray) -> torch.Tensor:
         """
         Single-step forward for acting with recurrent state.
-        maps_chw: numpy [C,H,W], extras_8: numpy [8]
+        maps_chw: numpy [C,H,W], extras_9: numpy [9]
         """
         m = torch.tensor(maps_chw, dtype=torch.float32, device=DEVICE).unsqueeze(0).unsqueeze(0)  # [1,1,C,H,W]
-        e = torch.tensor(extras_8, dtype=torch.float32, device=DEVICE).view(1, 1, 8)              # [1,1,8]
+        e = torch.tensor(extras_9, dtype=torch.float32, device=DEVICE).view(1, 1, 9)              # [1,1,9]
         q_seq, self.hidden = self.q_net(m, e, self.hidden)  # [1,1,A]
         return q_seq.squeeze(0).squeeze(0)
 
     def act(self, obs_tuple) -> int:
         """
-        obs_tuple = (state_maps [C,H,W] torch, extra_information [8] torch)
+        obs_tuple = (state_maps [C,H,W] torch, extra_information [9] torch)
         """
         state_maps_t, extra_info_t = obs_tuple
         maps_chw = maps_to_chw_numpy(state_maps_t)
-        extras_8 = extras_to_numpy(extra_info_t)
+        extras_9 = extras_to_numpy(extra_info_t)
 
         if random.random() <= self.eps:
             return random.randrange(self.action_size)
-        q = self._forward_step(maps_chw, extras_8)
+        q = self._forward_step(maps_chw, extras_9)
         return int(q.argmax(dim=-1).item())
 
     def remember(self, maps, extras, action, reward, next_maps, next_extras, done):
@@ -381,10 +381,6 @@ class DRQNAgent:
         self.optim.step()
 
         self.losses.append(float(loss.item()))
-
-        # eps decay
-        if self.eps > self.eps_min:
-            self.eps *= self.eps_decay
 
         # target soft update
         self.soft_update_target(TAU)
@@ -440,12 +436,16 @@ def train_agent(episodes=2000, action_size: int = 3):
             obs = next_obs
             total_reward += r
 
-            if agent.replay.num_episodes() >= 4:
+            if agent.replay.num_episodes() >= 50:
                 agent.train_step()
 
         agent.replay.end_episode()
         scores.append(game.score)
         best = max(best, game.score)
+
+        # eps decay
+        if agent.eps > agent.eps_min:
+            agent.eps *= agent.eps_decay
 
         if ep % PRINT_EVERY == 0:
             avg = np.mean(scores) if len(scores) else 0.0

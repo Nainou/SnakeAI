@@ -534,7 +534,7 @@ def visualize_trained_agent(model_path, grid_size=10, num_games=3):
 
 if __name__ == "__main__":
     try:
-        model_path = "snake_model_episode_1500.pth"
+        model_path = "saved/snake_drqn_episode_500.pth"
         visualize_trained_agent(model_path, grid_size=10, num_games=3)
     except Exception as e:
         print(f"Error during visualization: {e}")
