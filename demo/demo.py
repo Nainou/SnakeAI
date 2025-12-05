@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional, Dict
 
 # All imports are local to demo folder - self-contained
-from snake_game_single import SnakeGameSingle
+from snake_game_single import SnakeGameSingle, Direction
 from snake_game_pvp import SnakeGamePvP
 from neural_network import NeuralNetwork, ConvQN
 
@@ -19,16 +19,23 @@ from tkinter import ttk, messagebox, scrolledtext
 class ModelMetadata:
 
     def __init__(self, model_type: str, input_size: int, hidden_size: int,
-                 output_size: int, extra_info: str = ""):
-        self.model_type = model_type  # e.g., 'pvp', 'ray', 'lstm', 'pixel'
+                 output_size: int, extra_info: str = "", hidden_size2: Optional[int] = None):
+        self.model_type = model_type  # e.g., 'pvp', 'ray', 'lstm', 'pixel', 'genetic'
         self.input_size = input_size
-        self.hidden_size = hidden_size
+        self.hidden_size = hidden_size  # First hidden layer size
+        self.hidden_size2 = hidden_size2  # Second hidden layer size (for genetic models)
         self.output_size = output_size
         self.extra_info = extra_info  # e.g., 'gen30', 'final', etc.
 
     def to_filename(self, prefix: str = "") -> str:
-        parts = [self.model_type, str(self.input_size), str(self.hidden_size),
-                 str(self.output_size)]
+        if self.hidden_size2 is not None:
+            # Genetic model format: genetic_32_20_12_4_extra
+            parts = [self.model_type, str(self.input_size), str(self.hidden_size),
+                     str(self.hidden_size2), str(self.output_size)]
+        else:
+            # Standard format: type_input_hidden_output_extra
+            parts = [self.model_type, str(self.input_size), str(self.hidden_size),
+                     str(self.output_size)]
         if self.extra_info:
             parts.append(self.extra_info)
         filename = "_".join(parts) + ".pth"
@@ -37,16 +44,33 @@ class ModelMetadata:
         return filename
 
     def __repr__(self):
-        return (f"ModelMetadata(type={self.model_type}, "
-                f"input={self.input_size}, hidden={self.hidden_size}, "
-                f"output={self.output_size}, extra='{self.extra_info}')")
+        if self.hidden_size2 is not None:
+            return (f"ModelMetadata(type={self.model_type}, "
+                    f"input={self.input_size}, hidden1={self.hidden_size}, "
+                    f"hidden2={self.hidden_size2}, output={self.output_size}, extra='{self.extra_info}')")
+        else:
+            return (f"ModelMetadata(type={self.model_type}, "
+                    f"input={self.input_size}, hidden={self.hidden_size}, "
+                    f"output={self.output_size}, extra='{self.extra_info}')")
 
 
 def parse_model_filename(filename: str) -> Optional[ModelMetadata]:
     # Remove .pth extension
     name = Path(filename).stem
 
-    # Pattern: type_input_hidden_output_optional_extra
+    # Pattern for genetic models: genetic_input_hidden1_hidden2_output_optional_extra
+    genetic_pattern = r'^genetic_(\d+)_(\d+)_(\d+)_(\d+)(?:_(.+))?$'
+    match = re.match(genetic_pattern, name)
+    if match:
+        model_type = "genetic"
+        input_size = int(match.group(1))
+        hidden_size = int(match.group(2))  # hidden_size1
+        hidden_size2 = int(match.group(3))  # hidden_size2
+        output_size = int(match.group(4))
+        extra_info = match.group(5) or ""
+        return ModelMetadata(model_type, input_size, hidden_size, output_size, extra_info, hidden_size2)
+
+    # Pattern: type_input_hidden_output_optional_extra (standard format)
     pattern = r'^([a-z]+)_(\d+)_(\d+)_(\d+)(?:_(.+))?$'
     match = re.match(pattern, name)
 
@@ -110,10 +134,17 @@ def list_models_in_directory(directory: Path) -> Dict[str, ModelMetadata]:
 
 def format_model_info(metadata: Optional[ModelMetadata], filename: str) -> str:
     if metadata:
-        info = (f"Type: {metadata.model_type.upper()}, "
-                f"Input: {metadata.input_size}, "
-                f"Hidden: {metadata.hidden_size}, "
-                f"Output: {metadata.output_size}")
+        if metadata.hidden_size2 is not None:
+            info = (f"Type: {metadata.model_type.upper()}, "
+                    f"Input: {metadata.input_size}, "
+                    f"Hidden1: {metadata.hidden_size}, "
+                    f"Hidden2: {metadata.hidden_size2}, "
+                    f"Output: {metadata.output_size}")
+        else:
+            info = (f"Type: {metadata.model_type.upper()}, "
+                    f"Input: {metadata.input_size}, "
+                    f"Hidden: {metadata.hidden_size}, "
+                    f"Output: {metadata.output_size}")
         if metadata.extra_info:
             info += f", Info: {metadata.extra_info}"
         return info
@@ -163,17 +194,24 @@ def infer_architecture_from_model(model_path: Path, device: torch.device):
                     return ModelMetadata(model_type, head_input_size, hidden_size, output_size, "")
             return None
 
-        # Check for FC model structure (Ray/PvP)
+        # Check for FC model structure (Ray/PvP/Genetic)
         if 'fc1.weight' in state_dict:
             input_size = state_dict['fc1.weight'].shape[1]
             hidden_size = state_dict['fc1.weight'].shape[0]
 
-            if 'fc4.weight' in state_dict:
+            # Check if it's a genetic model (has fc1, fc2, fc3 but no fc4)
+            if 'fc3.weight' in state_dict and 'fc4.weight' not in state_dict:
+                # Genetic model: (input_size, hidden_size1, hidden_size2, output_size)
+                hidden_size2 = state_dict['fc2.weight'].shape[0]
+                output_size = state_dict['fc3.weight'].shape[0]
+                model_type = "genetic"
+                return ModelMetadata(model_type, input_size, hidden_size, output_size, "", hidden_size2)
+            elif 'fc4.weight' in state_dict:
+                # Standard 4-layer model (Ray/PvP)
                 output_size = state_dict['fc4.weight'].shape[0]
+                return ModelMetadata(model_type, input_size, hidden_size, output_size, "")
             else:
                 return None
-
-            return ModelMetadata(model_type, input_size, hidden_size, output_size, "")
     except Exception as e:
         print(f"  Error inferring architecture: {e}")
         pass
@@ -187,7 +225,10 @@ def load_model_with_metadata(model_path: Path, metadata: Optional[ModelMetadata]
         print(f"  No metadata found, attempting to infer architecture...")
         metadata = infer_architecture_from_model(model_path, device)
         if metadata:
-            print(f"  ✓ Inferred architecture: {metadata.input_size}→{metadata.hidden_size}→{metadata.output_size}")
+            if metadata.hidden_size2 is not None:
+                print(f"  ✓ Inferred architecture: {metadata.input_size}→{metadata.hidden_size}→{metadata.hidden_size2}→{metadata.output_size}")
+            else:
+                print(f"  ✓ Inferred architecture: {metadata.input_size}→{metadata.hidden_size}→{metadata.output_size}")
         else:
             print(f"  ⚠ Could not infer architecture, using defaults (17→64→3)")
             metadata = ModelMetadata("pvp", 17, 64, 3, "")
@@ -205,12 +246,14 @@ def load_model_with_metadata(model_path: Path, metadata: Optional[ModelMetadata]
             device=device
         )
     else:
-        # Ray, PvP, and Genetic models use standard NeuralNetwork
+        # Ray, PvP, and Genetic models use NeuralNetwork
+        # Pass hidden_size2 for genetic models
         network = NeuralNetwork(
             input_size=metadata.input_size,
             hidden_size=metadata.hidden_size,
             output_size=metadata.output_size,
-            device=device
+            device=device,
+            hidden_size2=metadata.hidden_size2 if hasattr(metadata, 'hidden_size2') else None
         )
 
     # Load the state dict
@@ -238,7 +281,10 @@ def load_model_with_metadata(model_path: Path, metadata: Optional[ModelMetadata]
             state_dict = checkpoint
 
         network.load_state_dict(state_dict)
-        print(f"✓ Loaded {metadata.model_type} model: {metadata.input_size}→{metadata.hidden_size}→{metadata.output_size}")
+        if metadata.hidden_size2 is not None:
+            print(f"✓ Loaded {metadata.model_type} model: {metadata.input_size}→{metadata.hidden_size}→{metadata.hidden_size2}→{metadata.output_size}")
+        else:
+            print(f"✓ Loaded {metadata.model_type} model: {metadata.input_size}→{metadata.hidden_size}→{metadata.output_size}")
     except Exception as e:
         print(f"⚠ Warning: Could not load model weights: {e}")
         print("  Using randomly initialized network")
@@ -249,7 +295,8 @@ def load_model_with_metadata(model_path: Path, metadata: Optional[ModelMetadata]
 
 
 def demo_single_model(model_path: Path, metadata: ModelMetadata,
-                     grid_size: int = 10, render_delay: int = 10, keep_open: bool = True):
+                     grid_size: int = 10, render_delay: int = 10, keep_open: bool = True,
+                     show_ray_lines: bool = True):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     print(f"\n{'='*60}")
@@ -269,7 +316,8 @@ def demo_single_model(model_path: Path, metadata: ModelMetadata,
 
     # Create single-player game (NOT PvP) - similar to ray model
     game = SnakeGameSingle(grid_size=grid_size, display=True, render_delay=render_delay,
-                           state_size=state_size, use_pixel_state=is_pixel_model)
+                           state_size=state_size, use_pixel_state=is_pixel_model,
+                           show_ray_lines=show_ray_lines)
     game.set_network(network)
 
     # Get initial state (pixel format or vector format)
@@ -277,6 +325,9 @@ def demo_single_model(model_path: Path, metadata: ModelMetadata,
 
     print("\nGame started! Neural network visualization is shown on the right.")
     print("Close the game window to exit.\n")
+
+    # Check if this is a genetic model (4 actions instead of 3)
+    is_genetic_model = metadata.model_type == "genetic" and metadata.output_size == 4
 
     # Game loop
     step = 0
@@ -296,6 +347,32 @@ def demo_single_model(model_path: Path, metadata: ModelMetadata,
             # Get action from neural network
             action, activations = network.act(state, return_activations=True)
 
+            # Store original action for visualization (before conversion)
+            original_action = action
+
+            # Convert genetic model actions (0-3: UP, RIGHT, DOWN, LEFT) to demo format (0-2: straight, right, left)
+            if is_genetic_model:
+                # Genetic models output absolute directions, need to convert to relative
+                directions = [Direction.UP, Direction.RIGHT, Direction.DOWN, Direction.LEFT]
+                target_direction = directions[action]
+                current_direction = game.direction
+
+                if target_direction == current_direction:
+                    # Same direction = straight
+                    action = 0
+                else:
+                    # Find if it's a right or left turn
+                    current_idx = Direction.get_index(current_direction)
+                    target_idx = Direction.get_index(target_direction)
+                    # Calculate turn direction
+                    if (target_idx - current_idx) % 4 == 1:
+                        action = 1  # Right turn
+                    elif (target_idx - current_idx) % 4 == 3:
+                        action = 2  # Left turn
+                    else:
+                        # 180 degree turn, treat as right turn
+                        action = 1
+
             # Store state and activations for visualization
             # Pixel models use different visualization but still show activations
             if is_pixel_model:
@@ -305,7 +382,8 @@ def demo_single_model(model_path: Path, metadata: ModelMetadata,
             else:
                 game.last_state = state
             game.last_activations = activations
-            game.last_action = action
+            # Store original action for genetic models (0-3), converted action for others (0-2)
+            game.last_action = original_action if is_genetic_model else action
 
             # Step the game
             state, reward, done, info = game.step(action)
@@ -589,6 +667,14 @@ class DemoGUI:
         fps_spinbox = tk.Spinbox(fps_frame, from_=0, to=60, textvariable=self.fps_var, width=10)
         fps_spinbox.pack(side=tk.LEFT, padx=5)
 
+        # Show ray lines option (for ray models)
+        ray_frame = tk.Frame(settings_frame)
+        ray_frame.pack(fill=tk.X, pady=2)
+        self.show_ray_lines_var = tk.BooleanVar(value=True)
+        ray_checkbox = tk.Checkbutton(ray_frame, text="Show Ray Lines (for ray models)",
+                                      variable=self.show_ray_lines_var)
+        ray_checkbox.pack(side=tk.LEFT)
+
         # Buttons section
         buttons_frame = tk.Frame(self.root)
         buttons_frame.pack(fill=tk.X, padx=10, pady=10)
@@ -639,7 +725,10 @@ class DemoGUI:
         for filename, metadata in model_items:
             display_name = filename
             if metadata:
-                display_name += f" ({metadata.model_type.upper()}, {metadata.input_size}→{metadata.hidden_size}→{metadata.output_size})"
+                if metadata.hidden_size2 is not None:
+                    display_name += f" ({metadata.model_type.upper()}, {metadata.input_size}→{metadata.hidden_size}→{metadata.hidden_size2}→{metadata.output_size})"
+                else:
+                    display_name += f" ({metadata.model_type.upper()}, {metadata.input_size}→{metadata.hidden_size}→{metadata.output_size})"
             else:
                 display_name += " (Unknown format)"
 
@@ -739,9 +828,12 @@ class DemoGUI:
         self.log("Game window will open. Close it when done.")
         print(f"DEBUG: Starting single model demo with {filename}, num_snakes=1")
 
+        # Get show ray lines option
+        show_ray_lines = self.show_ray_lines_var.get()
+
         # Run in separate thread
         thread = threading.Thread(target=demo_single_model,
-                                 args=(model_path, metadata, grid_size, render_delay, True),
+                                 args=(model_path, metadata, grid_size, render_delay, True, show_ray_lines),
                                  daemon=True)
         thread.start()
 

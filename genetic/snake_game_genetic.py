@@ -31,7 +31,8 @@ class SnakeGameRL:
         self.grid_size = grid_size
         self.display = display
         self.render_delay = render_delay
-        self.last_food_step = 0  # Track steps since last food eaten
+        self.frames_since_last_apple = 0  # Track frames since last apple eaten
+        self.frames = 0  # Total frames alive
 
         # Display setup
         if self.display:
@@ -64,7 +65,8 @@ class SnakeGameRL:
         # Game state
         self.score = 0
         self.steps = 0
-        self.max_steps = self.grid_size * self.grid_size * 20  # Prevent infinite loops
+        self.frames = 0  # Total frames alive (for SnakeAI fitness)
+        self.frames_since_last_apple = 0  # Frames without eating (SnakeAI termination)
         self.done = False
         self.won = False
 
@@ -85,6 +87,8 @@ class SnakeGameRL:
         return None  # Game won - no empty cells
 
     def _calculate_distance_to_food(self):
+        if self.food_position is None:
+            return 0  # No food (game won)
         head = self.snake_positions[0]
         return abs(head[0] - self.food_position[0]) + abs(head[1] - self.food_position[1])
 
@@ -92,26 +96,71 @@ class SnakeGameRL:
         state = []
         head = self.snake_positions[0]
 
-        # Direction of food relative to head (2 values: x and y direction)
-        food_dir_x = 0
-        food_dir_y = 0
-        if self.food_position[0] > head[0]:
-            food_dir_x = 1
-        elif self.food_position[0] < head[0]:
-            food_dir_x = -1
-        if self.food_position[1] > head[1]:
-            food_dir_y = 1
-        elif self.food_position[1] < head[1]:
-            food_dir_y = -1
+        # 8-direction vision for apple distance
+        apple_distances = []
+        directions = [
+            (0, -1),   # Up
+            (1, -1),   # Up-Right
+            (1, 0),    # Right
+            (1, 1),    # Down-Right
+            (0, 1),    # Down
+            (-1, 1),   # Down-Left
+            (-1, 0),   # Left
+            (-1, -1),  # Up-Left
+        ]
 
-        state.extend([food_dir_x, food_dir_y])  # Food directions, 2 values
+        # Handle case where food_position is None (game won - no space for food)
+        if self.food_position is None:
+            apple_distances = [1.0] * 8  # No apple, max distance in all directions
+        else:
+            apple_dx = self.food_position[0] - head[0]
+            apple_dy = self.food_position[1] - head[1]
+            apple_manhattan = abs(apple_dx) + abs(apple_dy)
 
-        # Current direction (4 values: one-hot encoding)
-        direction_one_hot = [0, 0, 0, 0]
-        direction_one_hot[Direction.get_index(self.direction)] = 1
-        state.extend(direction_one_hot)  # Current direction, 4 values
+            for dx, dy in directions:
+                # Calculate distance to apple along this direction
+                # Project apple position onto direction vector
+                if dx == 0 and dy == 0:
+                    dist = 1.0
+                else:
+                    # Calculate projection
+                    dot_product = dx * apple_dx + dy * apple_dy
+                    if dot_product > 0:
+                        # Apple is in this direction, calculate normalized distance
+                        # Use Manhattan distance normalized by grid size
+                        dist = apple_manhattan / (self.grid_size * 2)
+                        dist = min(dist, 1.0)  # Cap at 1.0
+                    else:
+                        # Apple not in this direction
+                        dist = 1.0
+                apple_distances.append(dist)
 
-        # Danger detection in 8 directions (straight, left, right, diagonals)
+        state.extend(apple_distances)  # Apple distances in 8 directions, 8 values
+
+        # 8-direction vision for self distance (distance to own body)
+        self_distances = []
+        for dx, dy in directions:
+            min_dist = 1.0  # Default: no body in this direction
+            # Check distance to snake body in this direction
+            for i, body_pos in enumerate(self.snake_positions):
+                if i == 0:  # Skip head
+                    continue
+                body_dx = body_pos[0] - head[0]
+                body_dy = body_pos[1] - head[1]
+
+                # Check if body part is in this direction (dot product > 0)
+                if (dx * body_dx + dy * body_dy) > 0:
+                    # Calculate Manhattan distance
+                    body_manhattan = abs(body_dx) + abs(body_dy)
+                    dist = body_manhattan / (self.grid_size * 2)
+                    dist = min(dist, 1.0)
+                    min_dist = min(min_dist, dist)
+
+            self_distances.append(min_dist)
+
+        state.extend(self_distances)  # Self distances in 8 directions, 8 values
+
+        # Danger detection in 8 directions (walls and self)
         dangers = []
         check_positions = [
             (head[0], head[1] - 1),  # Up
@@ -134,39 +183,56 @@ class SnakeGameRL:
 
         state.extend(dangers)  # Danger detection, 8 values
 
-        # Distance to food (normalized)
-        dist_x = (self.food_position[0] - head[0]) / self.grid_size
-        dist_y = (self.food_position[1] - head[1]) / self.grid_size
-        state.extend([dist_x, dist_y])  # Distance to food, 2 values
+        # Current direction (4 values: one-hot encoding)
+        direction_one_hot = [0, 0, 0, 0]
+        direction_one_hot[Direction.get_index(self.direction)] = 1
+        state.extend(direction_one_hot)  # Current direction, 4 values
 
-        # Snake length (normalized)
-        state.append(len(self.snake_positions) / (self.grid_size * self.grid_size))  # 1 value
+        # Tail direction (4 values: one-hot encoding for direction to tail)
+        tail_direction_one_hot = [0, 0, 0, 0]
+        if len(self.snake_positions) > 1:
+            tail = self.snake_positions[-1]
+            tail_dx = tail[0] - head[0]
+            tail_dy = tail[1] - head[1]
 
+            # Determine primary direction to tail
+            if abs(tail_dx) > abs(tail_dy):
+                # Horizontal direction dominates
+                if tail_dx > 0:
+                    tail_direction_one_hot[Direction.get_index(Direction.RIGHT)] = 1
+                elif tail_dx < 0:
+                    tail_direction_one_hot[Direction.get_index(Direction.LEFT)] = 1
+            else:
+                # Vertical direction dominates
+                if tail_dy > 0:
+                    tail_direction_one_hot[Direction.get_index(Direction.DOWN)] = 1
+                elif tail_dy < 0:
+                    tail_direction_one_hot[Direction.get_index(Direction.UP)] = 1
+
+        state.extend(tail_direction_one_hot)  # Tail direction, 4 values
+
+        # Total: 8 apple distances + 8 self distances + 8 dangers + 4 current direction + 4 tail direction = 32
         return np.array(state, dtype=np.float32)
 
     def get_state_size(self):
         # Return the size of the state vector
-        return 17  # 2 food dir + 4 current dir + 8 dangers + 2 distances + 1 length
+        return 32  # 8 apple distances + 8 self distances + 8 dangers + 4 current direction + 4 tail direction
 
     def step(self, action):
         # Execute one game step with given action
-        # Action: 0 = straight, 1 = turn right, 2 = turn left
+        # Action: 0 = UP, 1 = RIGHT, 2 = DOWN, 3 = LEFT
 
         if self.done:
             return self.get_state(), 0, True, {}
 
         self.steps += 1
+        self.frames += 1
+        self.frames_since_last_apple += 1
 
-        # Update direction based on action
-        if action == 1:  # Turn right
-            directions = [Direction.UP, Direction.RIGHT, Direction.DOWN, Direction.LEFT]
-            current_idx = Direction.get_index(self.direction)
-            self.direction = directions[(current_idx + 1) % 4]
-        elif action == 2:  # Turn left
-            directions = [Direction.UP, Direction.RIGHT, Direction.DOWN, Direction.LEFT]
-            current_idx = Direction.get_index(self.direction)
-            self.direction = directions[(current_idx - 1) % 4]
-        # action == 0: keep going straight
+        # Update direction based on action (direct direction selection)
+        directions = [Direction.UP, Direction.RIGHT, Direction.DOWN, Direction.LEFT]
+        if 0 <= action < 4:
+            self.direction = directions[action]
 
         # Move snake
         head = self.snake_positions[0]
@@ -182,7 +248,7 @@ class SnakeGameRL:
             new_head in self.snake_positions):
             self.done = True
             reward = -20  # Big penalty for dying
-            return self.get_state(), reward, True, {'score': self.score}
+            return self.get_state(), reward, True, {'score': self.score, 'frames': self.frames}
 
         # Move snake
         self.snake_positions.appendleft(new_head)
@@ -190,7 +256,7 @@ class SnakeGameRL:
         # Check food collision
         if new_head == self.food_position:
             self.score += 1
-            self.last_food_step = self.steps  # Reset food step counter
+            self.frames_since_last_apple = 0  # Reset frame counter on eating
             reward = 30  # Big reward for eating food
 
             # Place new food
@@ -199,7 +265,7 @@ class SnakeGameRL:
                 self.done = True
                 self.won = True
                 reward = 50  # Huge bonus for winning
-                return self.get_state(), reward, True, {'score': self.score, 'won': True}
+                return self.get_state(), reward, True, {'score': self.score, 'frames': self.frames, 'won': True}
         else:
             # Remove tail if no food eaten
             self.snake_positions.pop()
@@ -212,20 +278,15 @@ class SnakeGameRL:
                 reward = -3  # Getting farther from food
             self.distance_to_food = new_distance
 
-        # Check if exceeded max steps (to prevent infinite loops)
-        if self.steps >= self.max_steps:
+        # SnakeAI termination: die after 100 frames without eating an apple
+        if self.frames_since_last_apple >= 100:
             self.done = True
-            reward = -10  # Penalty for taking too long
-
-        # Penalty for taking too long to find food
-        if self.steps - self.last_food_step >= 100:
-            self.done = True
-            reward = -100
+            return self.get_state(), reward, True, {'score': self.score, 'frames': self.frames}
 
         # Small time penalty to encourage efficiency
         reward -= 0.01
 
-        return self.get_state(), reward, self.done, {'score': self.score}
+        return self.get_state(), reward, self.done, {'score': self.score, 'frames': self.frames}
 
     def render(self):
         # Render the game using pygame if display is enabled
@@ -294,39 +355,32 @@ class SnakeGameRL:
 
 
 class NeuralNetwork(nn.Module):
-    def __init__(self, input_size=17, hidden_size=64, output_size=3, device=None):
-        # Enhanced neural network for genetic algorithm
-        # Larger network to break through performance plateaus
+    def __init__(self, input_size=32, hidden_size1=20, hidden_size2=12, output_size=4, device=None):
+        # Neural network for genetic algorithm
+        # Architecture: (32, 20, 12, 4)
         super(NeuralNetwork, self).__init__()
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Larger, deeper network for better learning capacity
-        self.fc1 = nn.Linear(input_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, hidden_size // 2)
-        self.fc4 = nn.Linear(hidden_size // 2, output_size)
-
-        # Add dropout for regularization during evolution
-        self.dropout = nn.Dropout(0.1)
+        # Network architecture: (32, 20, 12, 4)
+        self.fc1 = nn.Linear(input_size, hidden_size1)
+        self.fc2 = nn.Linear(hidden_size1, hidden_size2)
+        self.fc3 = nn.Linear(hidden_size2, output_size)
 
         # Move to device
         self.to(self.device)
 
     def forward(self, x):
-        x = torch.relu(self.fc1(x))
-        x = self.dropout(x)
-        x = torch.relu(self.fc2(x))
-        x = self.dropout(x)
-        x = torch.relu(self.fc3(x))
-        x = self.fc4(x)
+        x = torch.relu(self.fc1(x))  # Hidden activation: ReLU
+        x = torch.relu(self.fc2(x))  # Hidden activation: ReLU
+        x = torch.sigmoid(self.fc3(x))  # Output activation: Sigmoid
         return x
 
 class Individual:
-    def __init__(self, input_size=17, hidden_size=64, output_size=3, device=None):
+    def __init__(self, input_size=32, hidden_size1=20, hidden_size2=12, output_size=4, device=None):
         # Represents one individual in the genetic algorithm population
         # Each individual has a neural network and tracks its fitness
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.network = NeuralNetwork(input_size, hidden_size, output_size, self.device)
+        self.network = NeuralNetwork(input_size, hidden_size1, hidden_size2, output_size, self.device)
         self.fitness = 0
         self.games_played = 0
         self.total_score = 0
@@ -336,10 +390,15 @@ class Individual:
 
     def act(self, state):
         # Get action from the neural network
+        # Returns the direction with highest output value (0=UP, 1=RIGHT, 2=DOWN, 3=LEFT)
         with torch.no_grad():
-            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+            # Use numpy array directly if on CPU to avoid unnecessary conversions
+            if self.device.type == 'cpu':
+                state_tensor = torch.from_numpy(state).float().unsqueeze(0)
+            else:
+                state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
             output = self.network(state_tensor)
-            return output.argmax().item()
+            return output.argmax().item()  # Select direction with highest output
 
     def get_weights(self):
         # Extract all weights and biases as a flat numpy array
@@ -359,35 +418,51 @@ class Individual:
 
     def copy(self):
         # Create a deep copy of this individual
-        new_individual = Individual(device=self.device)
+        new_individual = Individual(input_size=32, hidden_size1=20, hidden_size2=12, output_size=4, device=self.device)
         new_individual.network.load_state_dict(self.network.state_dict())
         new_individual.fitness = self.fitness
         return new_individual
 
 class GeneticAlgorithm:
-    def __init__(self, population_size=50, mutation_rate=0.15, crossover_rate=0.8,
-                 elitism_ratio=0.15, tournament_size=5, num_threads=4, device=None):
+    def __init__(self, population_size=50, mutation_rate=0.05, crossover_rate=0.8,
+                 elitism_ratio=0.15, tournament_size=5, num_threads=4, device=None,
+                 selection_type='plus', crossover_type='mixed', num_parents=None, num_offspring=None):
         # Genetic Algorithm for evolving Snake AI
         # Args:
-        #   population_size: Number of individuals in each generation
-        #   mutation_rate: Probability of mutation for each weight
+        #   population_size: Number of individuals in each generation (used if num_parents/num_offspring not set)
+        #   mutation_rate: Probability of mutation for each weight (static 5%)
         #   crossover_rate: Probability of crossover between parents
         #   elitism_ratio: Fraction of best individuals to keep unchanged
         #   tournament_size: Number of individuals in tournament selection
         #   num_threads: Number of threads for parallel evaluation
         #   device: Device to run neural networks on (cuda/cpu)
-        self.population_size = population_size
-        self.mutation_rate = mutation_rate
+        #   selection_type: 'plus' for (μ+λ) selection, 'tournament' for tournament selection
+        #   crossover_type: 'mixed' for 50% SBX + 50% SPBX, 'sbx' for SBX only, 'spbx' for SPBX only
+        #   num_parents: Number of parents (if None, uses population_size)
+        #   num_offspring: Number of offspring to generate (if None, uses population_size)
+
+        # Use num_parents/num_offspring if provided, otherwise use population_size
+        if num_parents is None:
+            num_parents = population_size
+        if num_offspring is None:
+            num_offspring = population_size
+
+        self.num_parents = num_parents
+        self.num_offspring = num_offspring
+        self.population_size = num_parents  # Final population size is num_parents
+        self.mutation_rate = mutation_rate  # Static 5%
         self.crossover_rate = crossover_rate
         self.elitism_ratio = elitism_ratio
         self.tournament_size = tournament_size
         self.num_threads = num_threads
+        self.selection_type = selection_type
+        self.crossover_type = crossover_type
 
         # Device setup
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Initialize population
-        self.population = [Individual(device=self.device) for _ in range(population_size)]
+        # Initialize population with new architecture (32, 20, 12, 4)
+        self.population = [Individual(input_size=32, hidden_size1=20, hidden_size2=12, output_size=4, device=self.device) for _ in range(num_parents)]
 
         # Statistics tracking
         self.generation = 0
@@ -404,9 +479,10 @@ class GeneticAlgorithm:
         individual, game_class, num_games, individual_id = args
 
         total_score = 0
-        total_steps = 0
+        total_frames = 0
         max_score = 0
         wins = 0
+        total_fitness = 0
 
         for game_num in range(num_games):
             game = game_class(grid_size=10, display=False)
@@ -417,36 +493,33 @@ class GeneticAlgorithm:
                 state, reward, done, info = game.step(action)
 
             score = game.score
-            steps = game.steps
+            frames = game.frames
             won = getattr(game, 'won', False)
 
             total_score += score
-            total_steps += steps
+            total_frames += frames
             max_score = max(max_score, score)
             if won:
                 wins += 1
 
-        # Calculate fitness based on multiple factors
+            # SnakeAI fitness formula (per game)
+            # fitness = (frames) + ((2**score) + (score**2.1)*500) - (((.25 * frames)**1.3) * (score**1.2))
+            game_fitness = (frames) + ((2**score) + (score**2.1)*500) - (((.25 * frames)**1.3) * (score**1.2))
+            game_fitness = max(game_fitness, 0.1)  # Ensure minimum positive fitness
+            total_fitness += game_fitness
+
+        # Average fitness across all games (SnakeAI approach)
+        avg_fitness = total_fitness / num_games
         avg_score = total_score / num_games
-        avg_steps = total_steps / num_games
-        win_rate = wins / num_games
 
-        # Enhanced fitness function with non-linear rewards
-        fitness = (avg_score ** 1.5 * 100 +  # Non-linear score scaling
-                  max_score * 50 +           # Bonus for best single game
-                  win_rate * 1500 +          # Increased bonus for winning games
-                  min(avg_steps, 300) * 0.05 + # Small efficiency bonus
-                  (avg_score > 15) * 200 +   # Bonus for breaking score 15
-                  (avg_score > 25) * 500)    # Large bonus for breaking score 25
-
-        individual.fitness = fitness
+        individual.fitness = avg_fitness
         individual.games_played = num_games
         individual.total_score = total_score
         individual.max_score = max_score
-        individual.total_steps = total_steps
+        individual.total_steps = total_frames
         individual.wins = wins
 
-        return individual_id, fitness, avg_score
+        return individual_id, avg_fitness, avg_score
 
     def evaluate_population(self, game_class, num_games=3, verbose=False, progress_callback=None):
         # Evaluate the entire population's fitness using threading
@@ -500,12 +573,57 @@ class GeneticAlgorithm:
         tournament = random.sample(self.population, self.tournament_size)
         return max(tournament, key=lambda x: x.fitness)
 
-    def crossover(self, parent1, parent2):
-        # Create two offspring through crossover
-        if random.random() > self.crossover_rate:
-            return parent1.copy(), parent2.copy()
+    def roulette_wheel_selection(self):
+        # Select an individual using roulette wheel selection
+        # Based on fitness values (higher fitness = higher probability)
+        wheel = sum(ind.fitness for ind in self.population)
+        if wheel <= 0:
+            # If all fitnesses are non-positive, use random selection
+            return random.choice(self.population)
 
-        # Get parent weights
+        pick = random.uniform(0, wheel)
+        current = 0
+        for individual in self.population:
+            current += individual.fitness
+            if current > pick:
+                return individual
+        # Fallback to best individual if something goes wrong
+        return max(self.population, key=lambda x: x.fitness)
+
+    def plus_selection(self, parent_population, offspring_population):
+        # (μ+λ) selection: combine parents and offspring, select best num_parents
+        combined = parent_population + offspring_population
+        combined.sort(key=lambda x: x.fitness, reverse=True)
+        return combined[:self.num_parents]
+
+    def sbx_crossover(self, parent1, parent2, eta=100.0):
+        # Simulated Binary Crossover (SBX)
+        # eta: distribution index (higher = more similar to parents)
+        # Changed default eta from 2.0 to 100.0 to match SnakeAI approach
+        weights1 = parent1.get_weights()
+        weights2 = parent2.get_weights()
+
+        u = np.random.random(len(weights1))
+        beta = np.zeros(len(weights1))
+
+        for i in range(len(weights1)):
+            if u[i] <= 0.5:
+                beta[i] = (2 * u[i]) ** (1.0 / (eta + 1))
+            else:
+                beta[i] = (1.0 / (2 * (1 - u[i]))) ** (1.0 / (eta + 1))
+
+        offspring1_weights = 0.5 * ((1 + beta) * weights1 + (1 - beta) * weights2)
+        offspring2_weights = 0.5 * ((1 - beta) * weights1 + (1 + beta) * weights2)
+
+        offspring1 = Individual(input_size=32, hidden_size1=20, hidden_size2=12, output_size=4, device=self.device)
+        offspring2 = Individual(input_size=32, hidden_size1=20, hidden_size2=12, output_size=4, device=self.device)
+        offspring1.set_weights(offspring1_weights)
+        offspring2.set_weights(offspring2_weights)
+
+        return offspring1, offspring2
+
+    def spbx_crossover(self, parent1, parent2):
+        # Single-Point Binary Crossover (SPBX) - similar to single-point but for real-valued
         weights1 = parent1.get_weights()
         weights2 = parent2.get_weights()
 
@@ -515,90 +633,112 @@ class GeneticAlgorithm:
         offspring1_weights = np.concatenate([weights1[:crossover_point], weights2[crossover_point:]])
         offspring2_weights = np.concatenate([weights2[:crossover_point], weights1[crossover_point:]])
 
-        # Create offspring
-        offspring1 = Individual(device=self.device)
-        offspring2 = Individual(device=self.device)
+        offspring1 = Individual(input_size=32, hidden_size1=20, hidden_size2=12, output_size=4, device=self.device)
+        offspring2 = Individual(input_size=32, hidden_size1=20, hidden_size2=12, output_size=4, device=self.device)
         offspring1.set_weights(offspring1_weights)
         offspring2.set_weights(offspring2_weights)
 
         return offspring1, offspring2
 
+    def crossover(self, parent1, parent2):
+        # Create two offspring through crossover
+        # 50% SBX, 50% SPBX
+        if random.random() > self.crossover_rate:
+            return parent1.copy(), parent2.copy()
+
+        # Choose crossover type: 50% SBX, 50% SPBX
+        if self.crossover_type == 'mixed':
+            if random.random() < 0.5:
+                return self.sbx_crossover(parent1, parent2)
+            else:
+                return self.spbx_crossover(parent1, parent2)
+        elif self.crossover_type == 'sbx':
+            return self.sbx_crossover(parent1, parent2)
+        else:  # spbx
+            return self.spbx_crossover(parent1, parent2)
+
     def mutate(self, individual):
-        # Enhanced mutation with adaptive noise and multiple strategies
+        # Mutation: 100% Gaussian, 5% static rate
         weights = individual.get_weights()
 
-        # Adaptive mutation strength based on generation
-        base_strength = 0.1
-        adaptive_strength = base_strength * (1.0 + 0.5 * np.exp(-self.generation / 20))
+        # Static mutation strength (not adaptive)
+        mutation_strength = 0.1
 
-        # Apply different mutation strategies
+        # Apply Gaussian mutation (100%)
         for i in range(len(weights)):
-            if random.random() < self.mutation_rate:
-                mutation_type = random.random()
-
-                if mutation_type < 0.7:  # 70% - Gaussian noise
-                    weights[i] += np.random.normal(0, adaptive_strength)
-                elif mutation_type < 0.9:  # 20% - Larger jumps for exploration
-                    weights[i] += np.random.normal(0, adaptive_strength * 3)
-                else:  # 10% - Complete weight replacement
-                    weights[i] = np.random.normal(0, 0.5)
+            if random.random() < self.mutation_rate:  # 5% mutation rate
+                weights[i] += np.random.normal(0, mutation_strength)
 
         individual.set_weights(weights)
 
-    def calculate_diversity(self, individual1, individual2):
-        # Calculate diversity between two individuals based on weight differences
-        weights1 = individual1.get_weights()
-        weights2 = individual2.get_weights()
+    def calculate_diversity(self, weights1, weights2):
+        # Calculate diversity between two weight vectors (optimized)
         return np.linalg.norm(weights1 - weights2)
 
     def diversity_selection(self, candidates, target_count):
-        # Select individuals that maximize diversity
+        # Select individuals that maximize diversity (optimized for large populations)
         if len(candidates) <= target_count:
             return candidates
 
+        # For very large populations, use simpler selection to avoid freezing
+        if len(candidates) > 200:
+            # Use random sampling with top-k selection for speed
+            # Take top 50% of target_count from best, rest randomly
+            top_count = max(1, target_count // 2)
+            selected = candidates[:top_count]
+            # Randomly sample the rest from remaining candidates
+            remaining = candidates[top_count:]
+            if len(remaining) > 0:
+                additional = random.sample(remaining, min(target_count - top_count, len(remaining)))
+                selected.extend(additional)
+            return selected[:target_count]
+
+        # For smaller populations, use full diversity selection but with cached weights
+        # Pre-compute all weights once to avoid repeated expensive get_weights() calls
+        candidate_weights = [ind.get_weights() for ind in candidates]
+
         selected = [candidates[0]]  # Start with best individual
-        remaining = candidates[1:]
+        selected_weights = [candidate_weights[0]]
+        remaining = list(range(1, len(candidates)))  # Use indices instead of objects
 
         while len(selected) < target_count and remaining:
-            best_candidate = None
+            best_candidate_idx = None
             best_diversity = -1
 
-            for candidate in remaining:
-                min_diversity = min(self.calculate_diversity(candidate, selected_ind)
-                                  for selected_ind in selected)
+            for candidate_idx in remaining:
+                candidate_weights_vec = candidate_weights[candidate_idx]
+                # Calculate minimum diversity to any selected individual
+                min_diversity = min(self.calculate_diversity(candidate_weights_vec, sel_weights)
+                                  for sel_weights in selected_weights)
                 if min_diversity > best_diversity:
                     best_diversity = min_diversity
-                    best_candidate = candidate
+                    best_candidate_idx = candidate_idx
 
-            if best_candidate:
-                selected.append(best_candidate)
-                remaining.remove(best_candidate)
+            if best_candidate_idx is not None:
+                selected.append(candidates[best_candidate_idx])
+                selected_weights.append(candidate_weights[best_candidate_idx])
+                remaining.remove(best_candidate_idx)
             else:
                 break
 
         return selected
 
-    def evolve_generation(self):
-        # Create the next generation using genetic operations with diversity preservation
-        new_population = []
+    def evolve_generation(self, verbose=False, parent_selection='roulette_wheel'):
+        # Create the next generation using genetic operations
+        # Selection type: 'plus' uses (μ+λ) selection, otherwise tournament
+        # parent_selection: 'roulette_wheel' or 'tournament' for selecting parents
+        parent_population = [ind.copy() for ind in self.population]
+        offspring_population = []
 
-        # Enhanced elitism: keep the best individuals but ensure diversity
-        elite_count = int(self.population_size * self.elitism_ratio)
-        elite_candidates = self.population[:min(elite_count * 3, len(self.population))]
-        elites = self.diversity_selection(elite_candidates, elite_count)
-        new_population.extend([ind.copy() for ind in elites])
-
-        # Generate offspring to fill the rest of the population
-        while len(new_population) < self.population_size:
-            # Inject random individuals occasionally for diversity (5% chance)
-            if random.random() < 0.05 and len(new_population) < self.population_size - 1:
-                random_individual = Individual(device=self.device)
-                new_population.append(random_individual)
-                continue
-
-            # Select parents
-            parent1 = self.tournament_selection()
-            parent2 = self.tournament_selection()
+        # Generate offspring (num_offspring individuals)
+        while len(offspring_population) < self.num_offspring:
+            # Select parents using roulette wheel (matching SnakeAI approach)
+            if parent_selection == 'roulette_wheel':
+                parent1 = self.roulette_wheel_selection()
+                parent2 = self.roulette_wheel_selection()
+            else:
+                parent1 = self.tournament_selection()
+                parent2 = self.tournament_selection()
 
             # Create offspring
             offspring1, offspring2 = self.crossover(parent1, parent2)
@@ -607,11 +747,21 @@ class GeneticAlgorithm:
             self.mutate(offspring1)
             self.mutate(offspring2)
 
-            # Add to new population
-            new_population.extend([offspring1, offspring2])
+            # Add to offspring population
+            offspring_population.extend([offspring1, offspring2])
 
-        # Ensure exact population size
-        self.population = new_population[:self.population_size]
+        # Trim to exact num_offspring
+        offspring_population = offspring_population[:self.num_offspring]
+
+        # Apply selection: 'plus' uses (μ+λ), otherwise use offspring only
+        if self.selection_type == 'plus':
+            # (μ+λ) selection: combine parents and offspring, select best num_parents
+            self.population = self.plus_selection(parent_population, offspring_population)
+        else:
+            # Standard selection: use offspring only, select best num_parents
+            offspring_population.sort(key=lambda x: x.fitness, reverse=True)
+            self.population = offspring_population[:self.num_parents]
+
         self.generation += 1
 
     def get_best_individual(self):
@@ -628,10 +778,11 @@ class GeneticAlgorithm:
             return
 
         # Extract architecture info
-        # Genetic model: NeuralNetwork with input_size=17, hidden_size=64, output_size=3
+        # Genetic model: NeuralNetwork with input_size=32, hidden_size1=20, hidden_size2=12, output_size=4
         input_size = best_individual.network.fc1.in_features
         hidden_size = best_individual.network.fc1.out_features
-        output_size = best_individual.network.fc4.out_features
+        hidden_size2 = best_individual.network.fc2.out_features
+        output_size = best_individual.network.fc3.out_features
 
         # If include_metadata, create filename with metadata
         if include_metadata:
@@ -653,8 +804,8 @@ class GeneticAlgorithm:
                 save_dir = path_obj
 
             # Create new filename with metadata
-            # Format: genetic_{input_size}_{hidden_size}_{output_size}_{extra_info}.pth
-            parts = ["genetic", str(input_size), str(hidden_size), str(output_size)]
+            # Format: genetic_{input_size}_{hidden_size1}_{hidden_size2}_{output_size}_{extra_info}.pth
+            parts = ["genetic", str(input_size), str(hidden_size), str(hidden_size2), str(output_size)]
             if extra_info:
                 parts.append(extra_info)
             new_filename = "_".join(parts) + ".pth"
@@ -669,27 +820,224 @@ class GeneticAlgorithm:
 
     def load_individual(self, filepath):
         # Load a neural network into a new individual
-        individual = Individual(device=self.device)
+        individual = Individual(input_size=32, hidden_size1=20, hidden_size2=12, output_size=4, device=self.device)
         individual.network.load_state_dict(torch.load(filepath, map_location=self.device))
         return individual
 
+    def save_state(self, filepath):
+        # Save the complete GeneticAlgorithm state for resuming training
+        # This saves the entire population, generation number, and history
+        state = {
+            'generation': self.generation,
+            'population': [ind.get_weights() for ind in self.population],
+            'best_fitness_history': self.best_fitness_history,
+            'avg_fitness_history': self.avg_fitness_history,
+            'best_score_history': self.best_score_history,
+            'avg_score_history': self.avg_score_history,
+            'num_parents': self.num_parents,
+            'num_offspring': self.num_offspring,
+            'mutation_rate': self.mutation_rate,
+            'crossover_rate': self.crossover_rate,
+            'elitism_ratio': self.elitism_ratio,
+            'tournament_size': self.tournament_size,
+            'selection_type': self.selection_type,
+            'crossover_type': self.crossover_type,
+        }
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+        torch.save(state, filepath)
+
+    def load_state(self, filepath):
+        # Load the complete GeneticAlgorithm state from a saved checkpoint
+        state = torch.load(filepath, map_location=self.device)
+
+        self.generation = state['generation']
+        self.best_fitness_history = state['best_fitness_history']
+        self.avg_fitness_history = state['avg_fitness_history']
+        self.best_score_history = state['best_score_history']
+        self.avg_score_history = state['avg_score_history']
+
+        # Reconstruct population from saved weights
+        self.population = []
+        for weights in state['population']:
+            individual = Individual(input_size=32, hidden_size1=20, hidden_size2=12, output_size=4, device=self.device)
+            individual.set_weights(weights)
+            self.population.append(individual)
+
+        return self
+
+def resume_from_checkpoint(checkpoint_path, generations=50, population_size=50, games_per_eval=3,
+                          verbose=True, num_threads=4, quiet=False, device=None,
+                          num_parents=None, num_offspring=None):
+    # Resume training from a checkpoint file
+    # If checkpoint is a full state file (.state.pth), loads complete state
+    # If checkpoint is a model file (.pth), loads best individual and seeds population
+    # Args:
+    #   checkpoint_path: Path to checkpoint file (full state or model file)
+    #   Other args same as train_genetic_algorithm
+
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    checkpoint_path = Path(checkpoint_path)
+
+    # Check if it's a full state file
+    if checkpoint_path.suffix == '.pth' and 'state' in checkpoint_path.stem.lower():
+        # Load full state
+        ga = GeneticAlgorithm(
+            population_size=population_size,
+            num_threads=num_threads,
+            device=device,
+            mutation_rate=0.05,
+            selection_type='plus',
+            crossover_type='mixed',
+            num_parents=num_parents,
+            num_offspring=num_offspring
+        )
+        ga.load_state(checkpoint_path)
+        start_gen = ga.generation
+        if not quiet:
+            print(f"Resuming from generation {start_gen} (full state loaded)")
+    else:
+        # Load best individual from model file and seed population
+        ga = GeneticAlgorithm(
+            population_size=population_size,
+            num_threads=num_threads,
+            device=device,
+            mutation_rate=0.05,
+            selection_type='plus',
+            crossover_type='mixed',
+            num_parents=num_parents,
+            num_offspring=num_offspring
+        )
+
+        # Extract generation number from filename
+        gen_match = re.search(r'gen[_\s]*(\d+)', checkpoint_path.stem.lower())
+        if gen_match:
+            start_gen = int(gen_match.group(1))
+        else:
+            start_gen = 0
+            if not quiet:
+                print("Warning: Could not extract generation number from filename, starting from 0")
+
+        # Load the best individual
+        best_individual = ga.load_individual(checkpoint_path)
+
+        # Seed population: first individual is the loaded one, rest are mutations
+        ga.population[0] = best_individual
+        for i in range(1, len(ga.population)):
+            # Create a mutated copy
+            mutated = best_individual.copy()
+            ga.mutate(mutated)
+            ga.population[i] = mutated
+
+        if not quiet:
+            print(f"Resuming from generation {start_gen} (loaded best individual and seeded population)")
+
+    # Continue training from start_gen
+    if not quiet:
+        print(f"Continuing training for {generations - start_gen} more generations")
+        print(f"Population: {ga.population_size}, Threads: {num_threads}")
+        print(f"Device: {device}")
+        print("=" * 60)
+    else:
+        print(f"Resuming training on {device} | Pop: {ga.population_size} | Gen: {start_gen}-{generations} | Threads: {num_threads}")
+
+    start_time = time.time()
+    generation_times = []
+
+    for gen in range(start_gen, generations):
+        gen_start = time.time()
+
+        # Evaluate current generation
+        if quiet:
+            def progress_callback(completed, total):
+                if completed % max(1, total // 4) == 0:
+                    print(f"Gen {gen}: {completed}/{total}", end='\r')
+
+            ga.evaluate_population(SnakeGameRL, num_games=games_per_eval,
+                                 verbose=False, progress_callback=progress_callback)
+
+            best_score = ga.best_score_history[-1]
+            avg_score = ga.avg_score_history[-1]
+            gen_time = time.time() - gen_start
+            print(f"Gen {gen:2d}: Best={best_score:4.1f} Avg={avg_score:4.1f} ({gen_time:4.1f}s)")
+        else:
+            ga.evaluate_population(SnakeGameRL, num_games=games_per_eval, verbose=verbose)
+
+        # Save best individual periodically
+        if gen % 10 == 0:
+            ga.save_best(f'saved/genetic_snake_gen_{gen}.pth')
+            # Also save full state for better resume capability
+            ga.save_state(f'saved/genetic_snake_gen_{gen}.state.pth')
+
+        # Evolve to next generation (except for the last generation)
+        if gen < generations - 1:
+            ga.evolve_generation(verbose=verbose, parent_selection='roulette_wheel')
+
+        # Show generation summary
+        gen_time = time.time() - gen_start
+        generation_times.append(gen_time)
+        if not quiet and gen % 5 == 0:
+            best_score = ga.best_score_history[-1]
+            avg_score = ga.avg_score_history[-1]
+            print(f"Generation {gen} complete: Best={best_score:.1f}, Avg={avg_score:.1f} ({gen_time:.1f}s)")
+
+    # Save final best individual
+    ga.save_best('saved/genetic_snake_final.pth')
+    ga.save_state('saved/genetic_snake_final.state.pth')
+
+    elapsed_time = time.time() - start_time
+
+    # Store training statistics
+    ga.training_stats = {
+        'total_generations': generations - start_gen,
+        'start_generation': start_gen,
+        'population_size': ga.population_size,
+        'games_per_eval': games_per_eval,
+        'elapsed_time': elapsed_time,
+        'generation_times': generation_times,
+    }
+
+    return ga
+
 def train_genetic_algorithm(generations=50, population_size=50, games_per_eval=3,
-                          verbose=True, num_threads=4, quiet=False, device=None):
+                          verbose=True, num_threads=4, quiet=False, device=None,
+                          num_parents=None, num_offspring=None, resume_from=None):
     # Train a genetic algorithm to play Snake
     # Args:
     #   generations: Number of generations to evolve
-    #   population_size: Size of population in each generation
+    #   population_size: Size of population in each generation (used if num_parents/num_offspring not set)
     #   games_per_eval: Number of games to play for fitness evaluation
     #   verbose: Print detailed progress
     #   num_threads: Number of threads for parallel evaluation
     #   quiet: Minimal output mode
     #   device: Device to run on (cuda/cpu)
+    #   num_parents: Number of parents (if None, uses population_size)
+    #   num_offspring: Number of offspring to generate (if None, uses population_size)
+    #   resume_from: Path to checkpoint file to resume from (if None, starts fresh)
+
+    # If resume_from is provided, use resume function instead
+    if resume_from is not None:
+        return resume_from_checkpoint(
+            resume_from, generations, population_size, games_per_eval,
+            verbose, num_threads, quiet, device, num_parents, num_offspring
+        )
+
     # Device setup
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Initialize genetic algorithm
-    ga = GeneticAlgorithm(population_size=population_size, num_threads=num_threads, device=device)
+    # Initialize genetic algorithm with new settings
+    ga = GeneticAlgorithm(
+        population_size=population_size,
+        num_threads=num_threads,
+        device=device,
+        mutation_rate=0.05,  # Static 5% mutation rate
+        selection_type='plus',  # (μ+λ) selection
+        crossover_type='mixed',  # 50% SBX, 50% SPBX
+        num_parents=num_parents,
+        num_offspring=num_offspring
+    )
 
     if not quiet:
         print(f"Genetic Algorithm Training")
@@ -725,11 +1073,13 @@ def train_genetic_algorithm(generations=50, population_size=50, games_per_eval=3
 
         # Save best individual periodically
         if gen % 10 == 0:
-            ga.save_best(f'genetic/saved/genetic_snake_gen_{gen}.pth')
+            ga.save_best(f'saved/genetic_snake_gen_{gen}.pth')
+            # Also save full state for better resume capability
+            ga.save_state(f'saved/genetic_snake_gen_{gen}.state.pth')
 
         # Evolve to next generation (except for the last generation)
         if gen < generations - 1:
-            ga.evolve_generation()
+            ga.evolve_generation(verbose=verbose, parent_selection='roulette_wheel')
 
         # Show generation summary
         gen_time = time.time() - gen_start
@@ -740,7 +1090,8 @@ def train_genetic_algorithm(generations=50, population_size=50, games_per_eval=3
             print(f"Generation {gen} complete: Best={best_score:.1f}, Avg={avg_score:.1f} ({gen_time:.1f}s)")
 
     # Save final best individual
-    ga.save_best('genetic/saved/genetic_snake_final.pth')
+    ga.save_best('saved/genetic_snake_final.pth')
+    ga.save_state('saved/genetic_snake_final.state.pth')
 
     elapsed_time = time.time() - start_time
 

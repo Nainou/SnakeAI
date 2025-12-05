@@ -24,7 +24,7 @@ def main():
         '../genetic_snake_gen_830.pth',
         '../genetic_snake_gen_820.pth',
         '../genetic_snake_gen_810.pth',
-        '../genetic_snake_gen_800.pth',
+        'snake2/saved/genetic_32_20_12_4_gen90.pth',
     ]
 
     # Find the best available model

@@ -2,10 +2,18 @@ from snake_game_genetic import train_genetic_algorithm, plot_training_progress, 
 import sys
 import multiprocessing
 from pathlib import Path
+import re
 
-def get_optimal_threads():
+def get_optimal_threads(population_size=200):
     cpu_count = multiprocessing.cpu_count()
-    return min(max(2, cpu_count - 1), 8)  # Leave 1 core free, max 8 threads
+    # Scale threads with population size, but cap reasonably
+    # For larger populations, use more threads
+    if population_size >= 500:
+        return min(cpu_count, 16)  # Up to 16 threads for large populations
+    elif population_size >= 200:
+        return min(cpu_count - 1, 12)  # Up to 12 threads for medium populations
+    else:
+        return min(max(2, cpu_count - 1), 8)  # Default: leave 1 core free, max 8 threads
 
 if __name__ == "__main__":
     # Example usage
@@ -25,28 +33,73 @@ if __name__ == "__main__":
         print("   Training will be MUCH slower. Install PyTorch with CUDA support for GPU acceleration.")
         print("   Check: python -c 'import torch; print(torch.cuda.is_available())'")
 
-    threads = get_optimal_threads()
+    # Use SnakeAI approach: 500 parents, 1000 offspring
+    num_parents = 500
+    num_offspring = 1000
+    threads = get_optimal_threads(num_parents)
+    print(f"Parents: {num_parents}, Offspring: {num_offspring}")
     print(f"Threads: {threads}")
     print()
+
+    # Check for existing checkpoints to resume from
+    saved_dir = Path('saved')
+    resume_from = None
+
+    # Look for full state files first (best option)
+    state_files = list(saved_dir.glob('genetic_*.state.pth'))
+    if state_files:
+        # Sort by generation number (extract from filename)
+        def get_gen_number(path):
+            match = re.search(r'gen[_\s]*(\d+)', path.stem.lower())
+            return int(match.group(1)) if match else -1
+
+        state_files.sort(key=get_gen_number, reverse=True)
+        resume_from = str(state_files[0])
+        gen_num = get_gen_number(state_files[0])
+        print(f"Found checkpoint: {resume_from} (generation {gen_num})")
+        print("Resuming training from checkpoint...")
+        print()
+    else:
+        # Look for model files as fallback (matches pattern: genetic_32_20_12_4_gen520.pth)
+        model_files = list(saved_dir.glob('genetic_*gen*.pth'))
+        if model_files:
+            def get_gen_number(path):
+                match = re.search(r'gen[_\s]*(\d+)', path.stem.lower())
+                return int(match.group(1)) if match else -1
+
+            model_files.sort(key=get_gen_number, reverse=True)
+            resume_from = str(model_files[0])
+            gen_num = get_gen_number(model_files[0])
+            print(f"Found model checkpoint: {resume_from} (generation {gen_num})")
+            print("Resuming training from model checkpoint (will seed population)...")
+            print()
+
+    # You can also manually specify a checkpoint:
+    # resume_from = 'saved/genetic_32_20_12_4_gen520.pth'
+    # Or set to None to start fresh:
+    # resume_from = None
 
     # Train the genetic algorithm
     ga = train_genetic_algorithm(
         generations=1500,
-        population_size=200,
+        population_size=num_parents,  # Used as fallback if num_parents not set
         games_per_eval=3,
         num_threads=threads,
         quiet=True,
         verbose=True,
-        device=device
+        device=device,
+        num_parents=num_parents,
+        num_offspring=num_offspring,
+        resume_from=resume_from
     )
 
     # Get the actual saved filename
-    saved_dir = Path('genetic/saved')
+    saved_dir = Path('saved')
     final_models = list(saved_dir.glob('genetic_*_final.pth'))
     if final_models:
         print(f"\nModel saved as '{final_models[0].name}'")
     else:
-        print("\nModel saved (check genetic/saved/ directory)")
+        print("\nModel saved (check saved/ directory)")
 
     # Print training statistics
     print_training_statistics(ga)

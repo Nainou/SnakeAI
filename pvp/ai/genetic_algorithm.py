@@ -46,7 +46,7 @@ class Individual:
 
     def copy(self):
         # Create a deep copy of this individual
-        new_individual = Individual(device=self.device)
+        new_individual = Individual(input_size=17, hidden_size=64, output_size=3, device=self.device)
         new_individual.network.load_state_dict(self.network.state_dict())
         new_individual.fitness = self.fitness
         return new_individual
@@ -55,29 +55,45 @@ class Individual:
 class GeneticAlgorithm:
     # Genetic Algorithm for evolving PvP Snake AI
 
-    def __init__(self, population_size=50, mutation_rate=0.15, crossover_rate=0.8,
-                 elitism_ratio=0.15, tournament_size=5, num_threads=4, device=None):
+    def __init__(self, population_size=50, mutation_rate=0.05, crossover_rate=0.8,
+                 elitism_ratio=0.15, tournament_size=5, num_threads=4, device=None,
+                 selection_type='plus', crossover_type='mixed', num_parents=None, num_offspring=None):
         # Initialize the genetic algorithm
         # Args:
-        #   population_size: Number of individuals in each generation
-        #   mutation_rate: Probability of mutation for each weight
+        #   population_size: Number of individuals in each generation (used if num_parents/num_offspring not set)
+        #   mutation_rate: Probability of mutation for each weight (static 5%)
         #   crossover_rate: Probability of crossover between parents
         #   elitism_ratio: Fraction of best individuals to keep unchanged
         #   tournament_size: Number of individuals in tournament selection
         #   num_threads: Number of threads for parallel evaluation
         #   device: Device to run neural networks on (cuda/cpu)
-        self.population_size = population_size
-        self.mutation_rate = mutation_rate
+        #   selection_type: 'plus' for (μ+λ) selection, 'tournament' for tournament selection
+        #   crossover_type: 'mixed' for 50% SBX + 50% SPBX, 'sbx' for SBX only, 'spbx' for SPBX only
+        #   num_parents: Number of parents (if None, uses population_size)
+        #   num_offspring: Number of offspring to generate (if None, uses population_size)
+
+        # Use num_parents/num_offspring if provided, otherwise use population_size
+        if num_parents is None:
+            num_parents = population_size
+        if num_offspring is None:
+            num_offspring = population_size
+
+        self.num_parents = num_parents
+        self.num_offspring = num_offspring
+        self.population_size = num_parents  # Final population size is num_parents
+        self.mutation_rate = mutation_rate  # Static 5%
         self.crossover_rate = crossover_rate
         self.elitism_ratio = elitism_ratio
         self.tournament_size = tournament_size
         self.num_threads = num_threads
+        self.selection_type = selection_type
+        self.crossover_type = crossover_type
 
         # Device setup
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Initialize population
-        self.population = [Individual(device=self.device) for _ in range(population_size)]
+        # Initialize population with PvP architecture (17, 64, 3)
+        self.population = [Individual(input_size=17, hidden_size=64, output_size=3, device=self.device) for _ in range(num_parents)]
 
         # Statistics tracking
         self.generation = 0
@@ -89,29 +105,32 @@ class GeneticAlgorithm:
         # Thread safety
         self.print_lock = Lock()
 
-    def evaluate_individual_worker(self, args):
-        # Worker function for threaded evaluation of PvP games
-        individual, game_class, num_games, individual_id, num_snakes = args
+    def evaluate_game_worker(self, args):
+        # Worker function for coevolution: evaluates a game between multiple individuals
+        # All individuals in the game get fitness updates (true coevolution)
+        game_class, individual_indices, num_games, num_snakes = args
 
-        total_score = 0
-        total_steps = 0
-        max_score = 0
-        wins = 0
-        total_position = 0
+        # Get the individuals for this game
+        game_individuals = [self.population[idx] for idx in individual_indices]
+
+        # Initialize tracking for all individuals in this game
+        results = {idx: {
+            'total_score': 0,
+            'total_steps': 0,
+            'max_score': 0,
+            'wins': 0,
+            'total_position': 0,
+            'games_played': 0
+        } for idx in individual_indices}
 
         for game_num in range(num_games):
             # Create PvP game
             game = game_class(grid_size=20, num_snakes=num_snakes, display=False)
 
-            # Set up all snakes with random opponents (including self)
+            # Set up all snakes with the individuals from the population
             networks = {}
-            for i in range(num_snakes):
-                if i == 0:  # First snake is always the individual being evaluated
-                    networks[i] = individual.network
-                else:
-                    # Use random individual from population as opponent
-                    opponent = random.choice(self.population)
-                    networks[i] = opponent.network
+            for i, idx in enumerate(individual_indices):
+                networks[i] = game_individuals[i].network
 
             game.set_snake_networks(networks)
             states = game.reset()
@@ -125,93 +144,160 @@ class GeneticAlgorithm:
 
                 states, rewards, done, info = game.step(actions)
 
-            # Calculate results for this individual
+            # Calculate results for ALL individuals in this game (coevolution)
             snake_scores = game.get_snake_scores()
             winner = info.get('winner')
 
-            # Find this individual's snake
-            individual_snake_id = None
-            for snake_id, network in networks.items():
-                if network == individual.network:
-                    individual_snake_id = snake_id
-                    break
-
-            if individual_snake_id is not None:
-                score = snake_scores.get(individual_snake_id, 0)
+            # Update results for all individuals
+            sorted_scores = sorted(snake_scores.values(), reverse=True)
+            for i, idx in enumerate(individual_indices):
+                score = snake_scores.get(i, 0)
                 steps = game.steps
-                won = (winner == individual_snake_id)
+                won = (winner == i)
 
-                total_score += score
-                total_steps += steps
-                max_score = max(max_score, score)
+                results[idx]['total_score'] += score
+                results[idx]['total_steps'] += steps
+                results[idx]['max_score'] = max(results[idx]['max_score'], score)
                 if won:
-                    wins += 1
+                    results[idx]['wins'] += 1
 
                 # Calculate position (1st, 2nd, etc.)
-                sorted_scores = sorted(snake_scores.values(), reverse=True)
                 position = sorted_scores.index(score) + 1
-                total_position += position
+                results[idx]['total_position'] += position
+                results[idx]['games_played'] += 1
 
-        # Calculate fitness based on multiple factors
-        avg_score = total_score / num_games
-        avg_steps = total_steps / num_games
-        win_rate = wins / num_games
-        avg_position = total_position / num_games
+        # Calculate and update fitness for all individuals
+        fitness_updates = {}
+        for idx in individual_indices:
+            res = results[idx]
+            if res['games_played'] > 0:
+                avg_score = res['total_score'] / res['games_played']
+                avg_steps = res['total_steps'] / res['games_played']
+                win_rate = res['wins'] / res['games_played']
+                avg_position = res['total_position'] / res['games_played']
 
-        # Enhanced fitness function for PvP
-        fitness = (avg_score ** 1.5 * 100 +           # Non-linear score scaling
-                  max_score * 50 +                    # Bonus for best single game
-                  win_rate * 2000 +                   # High bonus for winning
-                  (4 - avg_position) * 500 +          # Position bonus (1st=3, 2nd=2, etc.)
-                  min(avg_steps, 300) * 0.05 +        # Small efficiency bonus
-                  (avg_score > 10) * 300 +            # Bonus for breaking score 10
-                  (avg_score > 20) * 800)             # Large bonus for breaking score 20
+                # Enhanced fitness function for PvP
+                fitness = (avg_score ** 1.5 * 100 +           # Non-linear score scaling
+                          res['max_score'] * 50 +             # Bonus for best single game
+                          win_rate * 2000 +                    # High bonus for winning
+                          (4 - avg_position) * 500 +           # Position bonus (1st=3, 2nd=2, etc.)
+                          min(avg_steps, 300) * 0.05 +         # Small efficiency bonus
+                          (avg_score > 10) * 300 +             # Bonus for breaking score 10
+                          (avg_score > 20) * 800)              # Large bonus for breaking score 20
 
-        individual.fitness = fitness
-        individual.games_played = num_games
-        individual.total_score = total_score
-        individual.max_score = max_score
-        individual.total_steps = total_steps
-        individual.wins = wins
-        individual.avg_position = avg_position
+                fitness_updates[idx] = {
+                    'fitness': fitness,
+                    'avg_score': avg_score,
+                    'avg_position': avg_position,
+                    'total_score': res['total_score'],
+                    'max_score': res['max_score'],
+                    'total_steps': res['total_steps'],
+                    'wins': res['wins'],
+                    'games_played': res['games_played']
+                }
 
-        return individual_id, fitness, avg_score, avg_position
+        return fitness_updates
 
     def evaluate_population(self, game_class, num_games=3, num_snakes=2, verbose=False, progress_callback=None):
-        # Evaluate the entire population's fitness using threading
+        # Evaluate the entire population using coevolution: all individuals play against each other
+        # This is true coevolution where all individuals evolve together
         start_time = time.time()
 
         if verbose:
-            print(f"Gen {self.generation}: Evaluating {self.population_size} individuals...")
+            print(f"Gen {self.generation}: Evaluating {self.population_size} individuals (coevolution)...")
 
-        # Prepare arguments for threaded evaluation
-        eval_args = [(individual, game_class, num_games, i, num_snakes)
-                     for i, individual in enumerate(self.population)]
+        # Initialize fitness accumulators for all individuals
+        fitness_accumulators = {i: {
+            'fitness_sum': 0.0,
+            'score_sum': 0.0,
+            'position_sum': 0.0,
+            'total_score': 0,
+            'max_score': 0,
+            'total_steps': 0,
+            'wins': 0,
+            'games_played': 0
+        } for i in range(self.population_size)}
+
+        # For coevolution with 2 snakes: pair up individuals
+        # Each individual plays against multiple others to get diverse fitness evaluation
+        if num_snakes == 2:
+            # Create pairs: each individual plays against several others
+            # Use round-robin style: each individual plays against num_games different opponents
+            eval_args = []
+            for i in range(self.population_size):
+                # Select opponents for this individual
+                opponents = []
+                for _ in range(num_games):
+                    # Select a different opponent each game (not self)
+                    opponent_idx = random.randint(0, self.population_size - 1)
+                    while opponent_idx == i:
+                        opponent_idx = random.randint(0, self.population_size - 1)
+                    opponents.append(opponent_idx)
+
+                # Create game groups: one game per opponent
+                for opponent_idx in opponents:
+                    eval_args.append((game_class, [i, opponent_idx], 1, num_snakes))
+        else:
+            # For more than 2 snakes, group individuals
+            eval_args = []
+            for _ in range(self.population_size * num_games):
+                # Randomly select num_snakes individuals for each game
+                selected = random.sample(range(self.population_size), min(num_snakes, self.population_size))
+                eval_args.append((game_class, selected, 1, num_snakes))
 
         completed = 0
+        total_games = len(eval_args)
+
         # Use ThreadPoolExecutor for parallel evaluation
         with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
             # Submit all tasks
-            futures = {executor.submit(self.evaluate_individual_worker, args): args[2]
+            futures = {executor.submit(self.evaluate_game_worker, args): args
                       for args in eval_args}
 
             # Process completed tasks
             for future in as_completed(futures):
-                individual_id, fitness, avg_score, avg_position = future.result()
+                fitness_updates = future.result()
                 completed += 1
 
+                # Accumulate fitness updates for all individuals in the game
+                for idx, update in fitness_updates.items():
+                    acc = fitness_accumulators[idx]
+                    acc['fitness_sum'] += update['fitness']
+                    acc['score_sum'] += update['avg_score']
+                    acc['position_sum'] += update['avg_position']
+                    acc['total_score'] += update['total_score']
+                    acc['max_score'] = max(acc['max_score'], update['max_score'])
+                    acc['total_steps'] += update['total_steps']
+                    acc['wins'] += update['wins']
+                    acc['games_played'] += update['games_played']
+
                 if progress_callback:
-                    progress_callback(completed, self.population_size)
-                elif verbose and completed % max(1, self.population_size // 10) == 0:
+                    progress_callback(completed, total_games)
+                elif verbose and completed % max(1, total_games // 10) == 0:
                     with self.print_lock:
-                        print(f"  Progress: {completed}/{self.population_size}")
+                        print(f"  Progress: {completed}/{total_games} games")
+
+        # Update all individuals with accumulated fitness
+        for i, acc in fitness_accumulators.items():
+            if acc['games_played'] > 0:
+                self.population[i].fitness = acc['fitness_sum'] / acc['games_played']
+                self.population[i].games_played = acc['games_played']
+                self.population[i].total_score = acc['total_score']
+                self.population[i].max_score = acc['max_score']
+                self.population[i].total_steps = acc['total_steps']
+                self.population[i].wins = acc['wins']
+                self.population[i].avg_position = acc['position_sum'] / acc['games_played']
+            else:
+                # If no games played, set minimal fitness
+                self.population[i].fitness = 0.0
+                self.population[i].games_played = 0
 
         # Sort population by fitness (descending)
         self.population.sort(key=lambda x: x.fitness, reverse=True)
 
         # Update statistics
         fitnesses = [ind.fitness for ind in self.population]
-        scores = [ind.total_score / ind.games_played for ind in self.population]
+        scores = [ind.total_score / ind.games_played if ind.games_played > 0 else 0 for ind in self.population]
 
         self.best_fitness_history.append(fitnesses[0])
         self.avg_fitness_history.append(np.mean(fitnesses))
@@ -229,12 +315,57 @@ class GeneticAlgorithm:
         tournament = random.sample(self.population, self.tournament_size)
         return max(tournament, key=lambda x: x.fitness)
 
-    def crossover(self, parent1, parent2):
-        # Create two offspring through crossover
-        if random.random() > self.crossover_rate:
-            return parent1.copy(), parent2.copy()
+    def roulette_wheel_selection(self):
+        # Select an individual using roulette wheel selection
+        # Based on fitness values (higher fitness = higher probability)
+        wheel = sum(ind.fitness for ind in self.population)
+        if wheel <= 0:
+            # If all fitnesses are non-positive, use random selection
+            return random.choice(self.population)
 
-        # Get parent weights
+        pick = random.uniform(0, wheel)
+        current = 0
+        for individual in self.population:
+            current += individual.fitness
+            if current > pick:
+                return individual
+        # Fallback to best individual if something goes wrong
+        return max(self.population, key=lambda x: x.fitness)
+
+    def plus_selection(self, parent_population, offspring_population):
+        # (μ+λ) selection: combine parents and offspring, select best num_parents
+        combined = parent_population + offspring_population
+        combined.sort(key=lambda x: x.fitness, reverse=True)
+        return combined[:self.num_parents]
+
+    def sbx_crossover(self, parent1, parent2, eta=100.0):
+        # Simulated Binary Crossover (SBX)
+        # eta: distribution index (higher = more similar to parents)
+        # Changed default eta from 2.0 to 100.0 to match SnakeAI approach
+        weights1 = parent1.get_weights()
+        weights2 = parent2.get_weights()
+
+        u = np.random.random(len(weights1))
+        beta = np.zeros(len(weights1))
+
+        for i in range(len(weights1)):
+            if u[i] <= 0.5:
+                beta[i] = (2 * u[i]) ** (1.0 / (eta + 1))
+            else:
+                beta[i] = (1.0 / (2 * (1 - u[i]))) ** (1.0 / (eta + 1))
+
+        offspring1_weights = 0.5 * ((1 + beta) * weights1 + (1 - beta) * weights2)
+        offspring2_weights = 0.5 * ((1 - beta) * weights1 + (1 + beta) * weights2)
+
+        offspring1 = Individual(input_size=17, hidden_size=64, output_size=3, device=self.device)
+        offspring2 = Individual(input_size=17, hidden_size=64, output_size=3, device=self.device)
+        offspring1.set_weights(offspring1_weights)
+        offspring2.set_weights(offspring2_weights)
+
+        return offspring1, offspring2
+
+    def spbx_crossover(self, parent1, parent2):
+        # Single-Point Binary Crossover (SPBX) - similar to single-point but for real-valued
         weights1 = parent1.get_weights()
         weights2 = parent2.get_weights()
 
@@ -244,56 +375,60 @@ class GeneticAlgorithm:
         offspring1_weights = np.concatenate([weights1[:crossover_point], weights2[crossover_point:]])
         offspring2_weights = np.concatenate([weights2[:crossover_point], weights1[crossover_point:]])
 
-        # Create offspring
-        offspring1 = Individual(device=self.device)
-        offspring2 = Individual(device=self.device)
+        offspring1 = Individual(input_size=17, hidden_size=64, output_size=3, device=self.device)
+        offspring2 = Individual(input_size=17, hidden_size=64, output_size=3, device=self.device)
         offspring1.set_weights(offspring1_weights)
         offspring2.set_weights(offspring2_weights)
 
         return offspring1, offspring2
 
+    def crossover(self, parent1, parent2):
+        # Create two offspring through crossover
+        # 50% SBX, 50% SPBX
+        if random.random() > self.crossover_rate:
+            return parent1.copy(), parent2.copy()
+
+        # Choose crossover type: 50% SBX, 50% SPBX
+        if self.crossover_type == 'mixed':
+            if random.random() < 0.5:
+                return self.sbx_crossover(parent1, parent2)
+            else:
+                return self.spbx_crossover(parent1, parent2)
+        elif self.crossover_type == 'sbx':
+            return self.sbx_crossover(parent1, parent2)
+        else:  # spbx
+            return self.spbx_crossover(parent1, parent2)
+
     def mutate(self, individual):
-        # Enhanced mutation with adaptive noise
+        # Mutation: 100% Gaussian, 5% static rate
         weights = individual.get_weights()
 
-        # Adaptive mutation strength based on generation
-        base_strength = 0.1
-        adaptive_strength = base_strength * (1.0 + 0.5 * np.exp(-self.generation / 20))
+        # Static mutation strength (not adaptive)
+        mutation_strength = 0.1
 
-        # Apply different mutation strategies
+        # Apply Gaussian mutation (100%)
         for i in range(len(weights)):
-            if random.random() < self.mutation_rate:
-                mutation_type = random.random()
-
-                if mutation_type < 0.7:  # 70% - Gaussian noise
-                    weights[i] += np.random.normal(0, adaptive_strength)
-                elif mutation_type < 0.9:  # 20% - Larger jumps for exploration
-                    weights[i] += np.random.normal(0, adaptive_strength * 3)
-                else:  # 10% - Complete weight replacement
-                    weights[i] = np.random.normal(0, 0.5)
+            if random.random() < self.mutation_rate:  # 5% mutation rate
+                weights[i] += np.random.normal(0, mutation_strength)
 
         individual.set_weights(weights)
 
-    def evolve_generation(self):
+    def evolve_generation(self, verbose=False, parent_selection='roulette_wheel'):
         # Create the next generation using genetic operations
-        new_population = []
+        # Selection type: 'plus' uses (μ+λ) selection, otherwise tournament
+        # parent_selection: 'roulette_wheel' or 'tournament' for selecting parents
+        parent_population = [ind.copy() for ind in self.population]
+        offspring_population = []
 
-        # Elitism: keep the best individuals
-        elite_count = int(self.population_size * self.elitism_ratio)
-        elites = self.population[:elite_count]
-        new_population.extend([ind.copy() for ind in elites])
-
-        # Generate offspring to fill the rest of the population
-        while len(new_population) < self.population_size:
-            # Inject random individuals occasionally for diversity (5% chance)
-            if random.random() < 0.05 and len(new_population) < self.population_size - 1:
-                random_individual = Individual(device=self.device)
-                new_population.append(random_individual)
-                continue
-
-            # Select parents
-            parent1 = self.tournament_selection()
-            parent2 = self.tournament_selection()
+        # Generate offspring (num_offspring individuals)
+        while len(offspring_population) < self.num_offspring:
+            # Select parents using roulette wheel (matching SnakeAI approach)
+            if parent_selection == 'roulette_wheel':
+                parent1 = self.roulette_wheel_selection()
+                parent2 = self.roulette_wheel_selection()
+            else:
+                parent1 = self.tournament_selection()
+                parent2 = self.tournament_selection()
 
             # Create offspring
             offspring1, offspring2 = self.crossover(parent1, parent2)
@@ -302,11 +437,21 @@ class GeneticAlgorithm:
             self.mutate(offspring1)
             self.mutate(offspring2)
 
-            # Add to new population
-            new_population.extend([offspring1, offspring2])
+            # Add to offspring population
+            offspring_population.extend([offspring1, offspring2])
 
-        # Ensure exact population size
-        self.population = new_population[:self.population_size]
+        # Trim to exact num_offspring
+        offspring_population = offspring_population[:self.num_offspring]
+
+        # Apply selection: 'plus' uses (μ+λ), otherwise use offspring only
+        if self.selection_type == 'plus':
+            # (μ+λ) selection: combine parents and offspring, select best num_parents
+            self.population = self.plus_selection(parent_population, offspring_population)
+        else:
+            # Standard selection: use offspring only, select best num_parents
+            offspring_population.sort(key=lambda x: x.fitness, reverse=True)
+            self.population = offspring_population[:self.num_parents]
+
         self.generation += 1
 
     def get_best_individual(self):
@@ -366,6 +511,48 @@ class GeneticAlgorithm:
 
     def load_individual(self, filepath):
         # Load a neural network into a new individual
-        individual = Individual(device=self.device)
-        individual.network.load_state_dict(torch.load(filepath, map_location=self.device))
+        individual = Individual(input_size=17, hidden_size=64, output_size=3, device=self.device)
+        individual.network.load_state_dict(torch.load(filepath, map_location=self.device, weights_only=False))
         return individual
+
+    def save_state(self, filepath):
+        # Save the complete GeneticAlgorithm state for resuming training
+        # This saves the entire population, generation number, and history
+        from pathlib import Path
+        state = {
+            'generation': self.generation,
+            'population': [ind.get_weights() for ind in self.population],
+            'best_fitness_history': self.best_fitness_history,
+            'avg_fitness_history': self.avg_fitness_history,
+            'best_score_history': self.best_score_history,
+            'avg_score_history': self.avg_score_history,
+            'num_parents': self.num_parents,
+            'num_offspring': self.num_offspring,
+            'mutation_rate': self.mutation_rate,
+            'crossover_rate': self.crossover_rate,
+            'elitism_ratio': self.elitism_ratio,
+            'tournament_size': self.tournament_size,
+            'selection_type': self.selection_type,
+            'crossover_type': self.crossover_type,
+        }
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+        torch.save(state, filepath)
+
+    def load_state(self, filepath):
+        # Load the complete GeneticAlgorithm state from a saved checkpoint
+        state = torch.load(filepath, map_location=self.device, weights_only=False)
+
+        self.generation = state['generation']
+        self.best_fitness_history = state['best_fitness_history']
+        self.avg_fitness_history = state['avg_fitness_history']
+        self.best_score_history = state['best_score_history']
+        self.avg_score_history = state['avg_score_history']
+
+        # Reconstruct population from saved weights
+        self.population = []
+        for weights in state['population']:
+            individual = Individual(input_size=17, hidden_size=64, output_size=3, device=self.device)
+            individual.set_weights(weights)
+            self.population.append(individual)
+
+        return self

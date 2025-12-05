@@ -40,12 +40,24 @@ class NeuralNetworkVisualizer:
         self.small_font_size = 14
         self.label_font_size = 12
 
-    def draw_network(self, surface, activations, state_values, action=None, hidden_size=64, input_size=17):
+    def draw_network(self, surface, activations, state_values, action=None, hidden_size=64, input_size=17, hidden_size2=None, output_size=3):
         network_rect = pygame.Rect(0, 0, self.width, self.height)
         pygame.draw.rect(surface, self.colors['background'], network_rect)
 
+        # Check if this is a genetic model (has hidden_size2 and 4 outputs)
+        is_genetic = hidden_size2 is not None and output_size == 4
+
         # Determine layer structure based on input size
-        if input_size == 17:
+        if input_size == 32:
+            # Genetic model: 32 input
+            input_labels = [
+                "App U", "App UR", "App R", "App DR", "App D", "App DL", "App L", "App UL",
+                "Self U", "Self UR", "Self R", "Self DR", "Self D", "Self DL", "Self L", "Self UL",
+                "Dng U", "Dng UR", "Dng R", "Dng DR", "Dng D", "Dng DL", "Dng L", "Dng UL",
+                "Dir U", "Dir R", "Dir D", "Dir L",
+                "Tail U", "Tail R", "Tail D", "Tail L"
+            ]
+        elif input_size == 17:
             # PvP model: 17 input
             input_labels = [
                 "Food X", "Food Y", "Dir U", "Dir R", "Dir D", "Dir L",
@@ -53,17 +65,38 @@ class NeuralNetworkVisualizer:
                 "Dng D", "Dng DL", "Dng L", "Dng UL",
                 "Dist X", "Dist Y", "Length"
             ]
-        else:
+        elif input_size == 21:
             # Ray model: 21 input
+            input_labels = [
+                "Food X", "Food Y",
+                "Dir U", "Dir R", "Dir D", "Dir L",
+                "Dng U", "Dng UR", "Dng R", "Dng DR", "Dng D", "Dng DL", "Dng L", "Dng UL",
+                "Dist X", "Dist Y",
+                "Length",
+                "Tail U", "Tail R", "Tail D", "Tail L"
+            ]
+        else:
+            # Unknown model: generic labels
             input_labels = [f"Input {i+1}" for i in range(input_size)]
 
-        layers = [
-            {'name': 'Input', 'size': input_size, 'activations': state_values, 'labels': input_labels},
-            {'name': 'Hidden 1', 'size': hidden_size, 'activations': activations.get('fc1', torch.zeros(hidden_size))},
-            {'name': 'Hidden 2', 'size': hidden_size, 'activations': activations.get('fc2', torch.zeros(hidden_size))},
-            {'name': 'Hidden 3', 'size': hidden_size // 2, 'activations': activations.get('fc3', torch.zeros(hidden_size // 2))},
-            {'name': 'Output', 'size': 3, 'activations': activations.get('output', torch.zeros(3)), 'labels': ['Straight', 'Turn Right', 'Turn Left']}
-        ]
+        # Build layers based on model type
+        if is_genetic:
+            # Genetic model: 3 layers (fc1, fc2, fc3) with 4 outputs
+            layers = [
+                {'name': 'Input', 'size': input_size, 'activations': state_values, 'labels': input_labels},
+                {'name': 'Hidden 1', 'size': hidden_size, 'activations': activations.get('fc1', torch.zeros(hidden_size))},
+                {'name': 'Hidden 2', 'size': hidden_size2, 'activations': activations.get('fc2', torch.zeros(hidden_size2))},
+                {'name': 'Output', 'size': output_size, 'activations': activations.get('output', torch.zeros(output_size)), 'labels': ['UP', 'RIGHT', 'DOWN', 'LEFT']}
+            ]
+        else:
+            # Standard model: 4 layers (fc1, fc2, fc3, fc4) with 3 outputs
+            layers = [
+                {'name': 'Input', 'size': input_size, 'activations': state_values, 'labels': input_labels},
+                {'name': 'Hidden 1', 'size': hidden_size, 'activations': activations.get('fc1', torch.zeros(hidden_size))},
+                {'name': 'Hidden 2', 'size': hidden_size, 'activations': activations.get('fc2', torch.zeros(hidden_size))},
+                {'name': 'Hidden 3', 'size': hidden_size // 2, 'activations': activations.get('fc3', torch.zeros(hidden_size // 2))},
+                {'name': 'Output', 'size': output_size, 'activations': activations.get('output', torch.zeros(output_size)), 'labels': ['Straight', 'Turn Right', 'Turn Left']}
+            ]
 
         # Calculate layout
         num_layers = len(layers)
@@ -431,12 +464,13 @@ class NeuralNetworkVisualizer:
 
 
 class SnakeGameSingle:
-    def __init__(self, grid_size=20, display=True, render_delay=10, state_size=21, use_pixel_state=False):
+    def __init__(self, grid_size=20, display=True, render_delay=10, state_size=21, use_pixel_state=False, show_ray_lines=True):
         self.grid_size = grid_size
         self.display = display
         self.render_delay = render_delay
         self.state_size = state_size  # 17 for PvP models, 21 for Ray models
         self.use_pixel_state = use_pixel_state  # True for pixel models
+        self.show_ray_lines = show_ray_lines  # Show ray lines for ray models
         self.last_food_step = 0
 
         # Display setup
@@ -603,6 +637,100 @@ class SnakeGameSingle:
                 tail_direction_one_hot[Direction.get_index(self.direction)] = 1
 
             state.extend(tail_direction_one_hot)  # 4 values
+
+        # For 32-input models (Genetic), use genetic model state format
+        if self.state_size == 32:
+            # Genetic model format: 8 apple distances + 8 self distances + 8 dangers + 4 direction + 4 tail direction
+            # Rebuild state in genetic format
+            state = []
+
+            # 8-direction vision for apple distances
+            directions = [
+                (0, -1),   # Up
+                (1, -1),   # Up-Right
+                (1, 0),    # Right
+                (1, 1),    # Down-Right
+                (0, 1),    # Down
+                (-1, 1),   # Down-Left
+                (-1, 0),   # Left
+                (-1, -1)   # Up-Left
+            ]
+
+            apple_distances = []
+            for dx, dy in directions:
+                # Calculate distance to food in this direction
+                food_dx = self.food_position[0] - head[0]
+                food_dy = self.food_position[1] - head[1]
+
+                # Check if food is in this direction (dot product > 0)
+                if (dx * food_dx + dy * food_dy) > 0:
+                    # Calculate Manhattan distance
+                    manhattan = abs(food_dx) + abs(food_dy)
+                    dist = manhattan / (self.grid_size * 2)
+                    dist = min(dist, 1.0)
+                else:
+                    dist = 1.0  # Food not in this direction
+
+                apple_distances.append(dist)
+
+            state.extend(apple_distances)  # 8 values
+
+            # 8-direction vision for self distance (distance to own body)
+            self_distances = []
+            for dx, dy in directions:
+                min_dist = 1.0  # Default: no body in this direction
+                # Check distance to snake body in this direction
+                for i, body_pos in enumerate(self.snake_positions):
+                    if i == 0:  # Skip head
+                        continue
+                    body_dx = body_pos[0] - head[0]
+                    body_dy = body_pos[1] - head[1]
+
+                    # Check if body part is in this direction (dot product > 0)
+                    if (dx * body_dx + dy * body_dy) > 0:
+                        # Calculate Manhattan distance
+                        body_manhattan = abs(body_dx) + abs(body_dy)
+                        dist = body_manhattan / (self.grid_size * 2)
+                        dist = min(dist, 1.0)
+                        min_dist = min(min_dist, dist)
+
+                self_distances.append(min_dist)
+
+            state.extend(self_distances)  # 8 values
+
+            # Danger detection in 8 directions (already calculated above)
+            state.extend(dangers)  # 8 values
+
+            # Current direction (4 values: one-hot encoding)
+            direction_one_hot = [0, 0, 0, 0]
+            direction_one_hot[Direction.get_index(self.direction)] = 1
+            state.extend(direction_one_hot)  # 4 values
+
+            # Tail direction (4 values: one-hot encoding)
+            tail_direction_one_hot = [0, 0, 0, 0]
+            if len(self.snake_positions) >= 2:
+                tail = self.snake_positions[-1]
+                second_to_last = self.snake_positions[-2]
+                tail_dx = tail[0] - second_to_last[0]
+                tail_dy = tail[1] - second_to_last[1]
+
+                if tail_dx == 0 and tail_dy == -1:
+                    tail_direction = Direction.UP
+                elif tail_dx == 0 and tail_dy == 1:
+                    tail_direction = Direction.DOWN
+                elif tail_dx == -1 and tail_dy == 0:
+                    tail_direction = Direction.LEFT
+                elif tail_dx == 1 and tail_dy == 0:
+                    tail_direction = Direction.RIGHT
+                else:
+                    tail_direction = self.direction
+
+                tail_direction_one_hot[Direction.get_index(tail_direction)] = 1
+            else:
+                tail_direction_one_hot[Direction.get_index(self.direction)] = 1
+
+            state.extend(tail_direction_one_hot)  # 4 values
+            # Total: 8 + 8 + 8 + 4 + 4 = 32
 
         return np.array(state, dtype=np.float32)
 
@@ -800,6 +928,150 @@ class SnakeGameSingle:
             )
             pygame.draw.rect(self.game_surface, self.RED, rect)
 
+        # Draw ray lines for ray models (state_size == 21) to show what the snake "sees"
+        if self.show_ray_lines and self.state_size == 21 and self.alive and self.snake_positions:
+            head = self.snake_positions[0]
+            head_center_x = head[0] * self.square_size + self.square_size // 2
+            head_center_y = head[1] * self.square_size + self.square_size // 2
+
+            # 8 directions: Up, Up-Right, Right, Down-Right, Down, Down-Left, Left, Up-Left
+            ray_directions = [
+                (0, -1),   # Up
+                (1, -1),   # Up-Right
+                (1, 0),    # Right
+                (1, 1),    # Down-Right
+                (0, 1),    # Down
+                (-1, 1),   # Down-Left
+                (-1, 0),   # Left
+                (-1, -1)   # Up-Left
+            ]
+
+            # Calculate danger and distance for each direction
+            ray_info = []
+            for dx, dy in ray_directions:
+                # Check immediate next cell (what the snake actually sees)
+                next_pos = (head[0] + dx, head[1] + dy)
+                immediate_danger = 0
+                if (next_pos[0] < 0 or next_pos[0] >= self.grid_size or
+                    next_pos[1] < 0 or next_pos[1] >= self.grid_size or
+                    next_pos in self.snake_positions):
+                    immediate_danger = 1
+
+                # Cast ray to find distance to obstacle
+                distance = 0
+                for step in range(1, self.grid_size * 2):
+                    check_x = head[0] + dx * step
+                    check_y = head[1] + dy * step
+
+                    if (check_x < 0 or check_x >= self.grid_size or
+                        check_y < 0 or check_y >= self.grid_size or
+                        (check_x, check_y) in self.snake_positions):
+                        distance = step - 1
+                        break
+                else:
+                    # Ray extends to edge
+                    if dx == 0:
+                        distance = (self.grid_size - 1 - head[1]) if dy > 0 else head[1]
+                    elif dy == 0:
+                        distance = (self.grid_size - 1 - head[0]) if dx > 0 else head[0]
+                    else:
+                        dist_x = (self.grid_size - 1 - head[0]) if dx > 0 else head[0]
+                        dist_y = (self.grid_size - 1 - head[1]) if dy > 0 else head[1]
+                        distance = min(dist_x, dist_y)
+
+                ray_info.append({
+                    'direction': (dx, dy),
+                    'immediate_danger': immediate_danger,
+                    'distance': distance
+                })
+
+            # Draw rays with informative visualization
+            for info in ray_info:
+                dx, dy = info['direction']
+                immediate_danger = info['immediate_danger']
+                distance = info['distance']
+
+                # Calculate endpoint
+                end_x = head_center_x + dx * distance * self.square_size
+                end_y = head_center_y + dy * distance * self.square_size
+
+                # Color and style based on what snake sees:
+                # - Red: Immediate danger (next cell blocked)
+                # - Orange: Close obstacle (within 2 cells)
+                # - Yellow: Medium distance (3-5 cells)
+                # - Green: Far obstacle (6+ cells)
+                if immediate_danger == 1:
+                    ray_color = (255, 50, 50)  # Bright red for immediate danger
+                    line_width = 4
+                elif distance <= 2:
+                    ray_color = (255, 150, 50)  # Orange for close
+                    line_width = 3
+                elif distance <= 5:
+                    ray_color = (255, 255, 100)  # Yellow for medium
+                    line_width = 2
+                else:
+                    ray_color = (150, 255, 150)  # Green for far
+                    line_width = 2
+
+                # Draw ray line
+                pygame.draw.line(
+                    self.game_surface,
+                    ray_color,
+                    (head_center_x, head_center_y),
+                    (end_x, end_y),
+                    line_width
+                )
+
+                # Draw endpoint marker with distance indicator
+                marker_size = max(3, min(6, distance // 2))
+                pygame.draw.circle(
+                    self.game_surface,
+                    ray_color,
+                    (int(end_x), int(end_y)),
+                    marker_size
+                )
+
+                # Draw distance text near endpoint (for close obstacles)
+                if distance <= 3:
+                    font = pygame.font.Font(None, 16)
+                    dist_text = font.render(str(distance), True, (0, 0, 0))
+                    text_x = int(end_x) + 8 if dx >= 0 else int(end_x) - 20
+                    text_y = int(end_y) - 8 if dy <= 0 else int(end_y) + 8
+                    self.game_surface.blit(dist_text, (text_x, text_y))
+
+            # Draw line to food to show food direction (what the snake knows about food)
+            if self.food_position:
+                food_center_x = self.food_position[0] * self.square_size + self.square_size // 2
+                food_center_y = self.food_position[1] * self.square_size + self.square_size // 2
+
+                # Draw dashed line to food
+                dash_length = 5
+                dash_gap = 3
+                total_dist = ((food_center_x - head_center_x)**2 + (food_center_y - head_center_y)**2)**0.5
+                num_dashes = int(total_dist / (dash_length + dash_gap))
+
+                if num_dashes > 0:
+                    dx_total = food_center_x - head_center_x
+                    dy_total = food_center_y - head_center_y
+                    unit_x = dx_total / total_dist
+                    unit_y = dy_total / total_dist
+
+                    for i in range(num_dashes):
+                        start_t = i * (dash_length + dash_gap)
+                        end_t = start_t + dash_length
+                        start_x = head_center_x + unit_x * start_t
+                        start_y = head_center_y + unit_y * start_t
+                        end_x = head_center_x + unit_x * end_t
+                        end_y = head_center_y + unit_y * end_t
+
+                        pygame.draw.line(
+                            self.game_surface,
+                            (100, 200, 255),  # Light blue for food direction
+                            (start_x, start_y),
+                            (end_x, end_y),
+                            2
+                        )
+
         # Draw snake
         if self.alive:
             positions = list(self.snake_positions)
@@ -955,6 +1227,47 @@ class SnakeGameSingle:
                                    (hx + self.square_size - self.segment_margin - 5 - eye_size,
                                     hy + 5 + self.square_size//2 - eye_size, eye_size, eye_size))
 
+        # Draw danger cell highlights for ray models (after snake so they appear on top)
+        if self.show_ray_lines and self.state_size == 21 and self.alive and self.snake_positions:
+            head = self.snake_positions[0]
+            ray_directions = [
+                (0, -1),   # Up
+                (1, -1),   # Up-Right
+                (1, 0),    # Right
+                (1, 1),    # Down-Right
+                (0, 1),    # Down
+                (-1, 1),   # Down-Left
+                (-1, 0),   # Left
+                (-1, -1)   # Up-Left
+            ]
+
+            for dx, dy in ray_directions:
+                # Check immediate next cell (what the snake actually sees)
+                next_pos = (head[0] + dx, head[1] + dy)
+                immediate_danger = 0
+                if (next_pos[0] < 0 or next_pos[0] >= self.grid_size or
+                    next_pos[1] < 0 or next_pos[1] >= self.grid_size or
+                    next_pos in self.snake_positions):
+                    immediate_danger = 1
+
+                # Highlight blocked cells with red border/overlay
+                if immediate_danger == 1:
+                    blocked_x = head[0] + dx
+                    blocked_y = head[1] + dy
+                    if (0 <= blocked_x < self.grid_size and 0 <= blocked_y < self.grid_size):
+                        # Draw red border around the danger cell
+                        danger_rect = pygame.Rect(
+                            blocked_x * self.square_size,
+                            blocked_y * self.square_size,
+                            self.square_size,
+                            self.square_size
+                        )
+                        pygame.draw.rect(self.game_surface, (255, 100, 100), danger_rect, 4)
+                        # Also draw semi-transparent overlay
+                        overlay = pygame.Surface((self.square_size, self.square_size), pygame.SRCALPHA)
+                        overlay.fill((255, 100, 100, 100))
+                        self.game_surface.blit(overlay, (blocked_x * self.square_size, blocked_y * self.square_size))
+
         # Draw score
         score_text = self.score_font.render(f"Score: {self.score}", True, self.BLACK)
         score_bg = pygame.Surface((score_text.get_width() + 16, score_text.get_height() + 8), pygame.SRCALPHA)
@@ -981,15 +1294,29 @@ class SnakeGameSingle:
         if self.network is not None and self.last_activations is not None:
             # Visualize based on network type
             if hasattr(self.network, 'fc1') and self.last_state is not None:
-                # FC network (Ray/PvP models)
+                # FC network (Ray/PvP/Genetic models)
                 hidden_size = self.network.fc1.out_features
+                # Check if it's a genetic model (has hidden_size2 attribute)
+                hidden_size2 = getattr(self.network, 'hidden_size2', None)
+                # Determine output size from network structure
+                if hasattr(self.network, 'fc4') and self.network.fc4 is not None:
+                    # Standard model: use fc4 output size
+                    output_size = self.network.fc4.out_features
+                elif hasattr(self.network, 'fc3') and self.network.fc3 is not None:
+                    # Genetic model: use fc3 output size
+                    output_size = self.network.fc3.out_features
+                else:
+                    output_size = 3  # Default
+
                 self.nn_visualizer.draw_network(
                     self.nn_surface,
                     self.last_activations,
                     self.last_state,
                     self.last_action,
                     hidden_size=hidden_size,
-                    input_size=self.state_size
+                    input_size=self.state_size,
+                    hidden_size2=hidden_size2,
+                    output_size=output_size
                 )
             elif hasattr(self.network, 'convLayers'):
                 # Pixel model (ConvQN)
