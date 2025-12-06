@@ -296,7 +296,7 @@ def load_model_with_metadata(model_path: Path, metadata: Optional[ModelMetadata]
 
 def demo_single_model(model_path: Path, metadata: ModelMetadata,
                      grid_size: int = 10, render_delay: int = 10, keep_open: bool = True,
-                     show_ray_lines: bool = True):
+                     show_ray_lines: bool = True, record_video: bool = False, try_to_win: bool = True):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     print(f"\n{'='*60}")
@@ -320,92 +320,223 @@ def demo_single_model(model_path: Path, metadata: ModelMetadata,
                            show_ray_lines=show_ray_lines)
     game.set_network(network)
 
-    # Get initial state (pixel format or vector format)
-    state = game.reset()
-
     print("\nGame started! Neural network visualization is shown on the right.")
+    if try_to_win and record_video:
+        print("Will automatically restart until snake wins (max 100 attempts).")
     print("Close the game window to exit.\n")
 
     # Check if this is a genetic model (4 actions instead of 3)
     is_genetic_model = metadata.model_type == "genetic" and metadata.output_size == 4
 
-    # Game loop
-    step = 0
-    game_finished = False
+    # Video recording setup
+    video_frames = []
+    recording = False
+
+    if record_video:
+        try:
+            import imageio
+            recording = True
+            if try_to_win:
+                print("Video recording enabled. Will save video only if snake wins.")
+            else:
+                print("Video recording enabled. Will save video when game ends.")
+        except ImportError:
+            print("Warning: imageio not available. Install with 'pip install imageio' for video recording.")
+            record_video = False
 
     import pygame
 
-    while True:
-        # Handle pygame events
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                game.close()
-                return
+    # Outer loop for restarting games when "try to win" is enabled
+    attempt = 0
+    max_attempts = 100 if try_to_win and record_video else 1
 
-        # Continue game logic if not finished
-        if not game_finished and not game.done:
-            # Get action from neural network
-            action, activations = network.act(state, return_activations=True)
+    while attempt < max_attempts:
+        # Reset game for new attempt
+        state = game.reset()
+        step = 0
+        game_finished = False
 
-            # Store original action for visualization (before conversion)
-            original_action = action
+        # Clear video frames for new attempt if trying to win
+        if try_to_win and record_video:
+            video_frames = []
+            attempt += 1
+            if attempt > 1:
+                print(f"\n{'='*60}")
+                print(f"Attempt {attempt}/{max_attempts} - Restarting game...")
+                print(f"{'='*60}\n")
+        else:
+            attempt = 1  # Single attempt if not trying to win
 
-            # Convert genetic model actions (0-3: UP, RIGHT, DOWN, LEFT) to demo format (0-2: straight, right, left)
-            if is_genetic_model:
-                # Genetic models output absolute directions, need to convert to relative
-                directions = [Direction.UP, Direction.RIGHT, Direction.DOWN, Direction.LEFT]
-                target_direction = directions[action]
-                current_direction = game.direction
-
-                if target_direction == current_direction:
-                    # Same direction = straight
-                    action = 0
-                else:
-                    # Find if it's a right or left turn
-                    current_idx = Direction.get_index(current_direction)
-                    target_idx = Direction.get_index(target_direction)
-                    # Calculate turn direction
-                    if (target_idx - current_idx) % 4 == 1:
-                        action = 1  # Right turn
-                    elif (target_idx - current_idx) % 4 == 3:
-                        action = 2  # Left turn
-                    else:
-                        # 180 degree turn, treat as right turn
-                        action = 1
-
-            # Store state and activations for visualization
-            # Pixel models use different visualization but still show activations
-            if is_pixel_model:
-                # For pixel models, we don't need to store the input state for visualization
-                # The pixel visualizer will use the activations directly
-                game.last_state = None
-            else:
-                game.last_state = state
-            game.last_activations = activations
-            # Store original action for genetic models (0-3), converted action for others (0-2)
-            game.last_action = original_action if is_genetic_model else action
-
-            # Step the game
-            state, reward, done, info = game.step(action)
-            step += 1
-
-            if game.done and not game_finished:
-                # Show final score
-                print(f"\nGame finished!")
-                print(f"Final score: {game.score}")
-                print(f"Steps: {step}")
-                game_finished = True
-                if not keep_open:
+        # Inner game loop
+        while True:
+            # Handle pygame events
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
                     game.close()
                     return
 
-        # Always render (even after game ends if keep_open is True)
-        game.render()
+            # Continue game logic if not finished
+            if not game_finished and not game.done:
+                # Get action from neural network
+                action, activations = network.act(state, return_activations=True)
 
-        # If keep_open and game finished, just keep rendering until window is closed
-        if keep_open and game_finished:
-            # Continue rendering but don't step the game
+                # Store original action for visualization (before conversion)
+                original_action = action
+
+                # Convert genetic model actions (0-3: UP, RIGHT, DOWN, LEFT) to demo format (0-2: straight, right, left)
+                if is_genetic_model:
+                    # Genetic models output absolute directions, need to convert to relative
+                    directions = [Direction.UP, Direction.RIGHT, Direction.DOWN, Direction.LEFT]
+                    target_direction = directions[action]
+                    current_direction = game.direction
+
+                    if target_direction == current_direction:
+                        # Same direction = straight
+                        action = 0
+                    else:
+                        # Find if it's a right or left turn
+                        current_idx = Direction.get_index(current_direction)
+                        target_idx = Direction.get_index(target_direction)
+                        # Calculate turn direction
+                        if (target_idx - current_idx) % 4 == 1:
+                            action = 1  # Right turn
+                        elif (target_idx - current_idx) % 4 == 3:
+                            action = 2  # Left turn
+                        else:
+                            # 180 degree turn, treat as right turn
+                            action = 1
+
+                # Store state and activations for visualization
+                # Pixel models use different visualization but still show activations
+                if is_pixel_model:
+                    # For pixel models, we don't need to store the input state for visualization
+                    # The pixel visualizer will use the activations directly
+                    game.last_state = None
+                else:
+                    game.last_state = state
+                game.last_activations = activations
+                # Store original action for genetic models (0-3), converted action for others (0-2)
+                game.last_action = original_action if is_genetic_model else action
+
+                # Step the game
+                state, reward, done, info = game.step(action)
+                step += 1
+
+                if game.done and not game_finished:
+                    # Show final score
+                    print(f"\nGame finished!")
+                    print(f"Final score: {game.score}")
+                    print(f"Steps: {step}")
+                    game_finished = True
+
+                    # Save video if conditions are met
+                    should_save = False
+                    if record_video and recording and video_frames:
+                        if try_to_win:
+                            # Only save if snake won
+                            should_save = game.won
+                        else:
+                            # Save regardless of win/loss
+                            should_save = True
+
+                    if should_save:
+                        try:
+                            import imageio
+                            import os
+                            from datetime import datetime
+
+                            # Create videos directory if it doesn't exist
+                            videos_dir = Path(__file__).parent / "videos"
+                            videos_dir.mkdir(exist_ok=True)
+
+                            # Generate filename with timestamp
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            model_name = model_path.stem
+                            if game.won:
+                                video_filename = f"snake_win_{model_name}_{timestamp}.mp4"
+                            else:
+                                video_filename = f"snake_game_{model_name}_{timestamp}.mp4"
+                            video_path = videos_dir / video_filename
+
+                            print(f"\nSaving video to {video_path}...")
+                            imageio.mimsave(str(video_path), video_frames, fps=10)
+                            print(f"✓ Video saved successfully! ({len(video_frames)} frames)")
+                            if game.won:
+                                print(f"  Snake won with score: {game.score}")
+                            else:
+                                print(f"  Game ended with score: {game.score}")
+                        except Exception as e:
+                            print(f"Error saving video: {e}")
+                            import traceback
+                            traceback.print_exc()
+
+                        # If we saved the video and we're in try_to_win mode, we're done
+                        if try_to_win and game.won:
+                            if not keep_open:
+                                game.close()
+                                return
+                            # If keep_open, break out of inner loop but stay in outer loop
+                            break
+                    elif record_video and recording and try_to_win and not game.won:
+                        print(f"Video not saved (snake didn't win, score: {game.score})")
+                        # Restart the game by breaking out of inner loop
+                        break
+
+                    if not try_to_win:
+                        # If not trying to win, exit normally
+                        if not keep_open:
+                            game.close()
+                            return
+                        # If keep_open, break out of inner loop
+                        break
+
+            # Always render (even after game ends if keep_open is True)
+            game.render()
+
+            # Capture frame for video if recording
+            # Continue recording if: game is active, or game finished and (won or not in try_to_win mode)
+            should_capture = False
+            if record_video and recording:
+                if not game_finished:
+                    should_capture = True
+                elif game_finished:
+                    # After game ends, capture if: won (always), or not in try_to_win mode (save all games)
+                    should_capture = game.won or not try_to_win
+
+            if should_capture:
+                try:
+                    # Limit frames to prevent excessive memory usage (max ~10 minutes at 10 fps)
+                    if len(video_frames) < 6000:
+                        # Capture the entire window
+                        frame = pygame.surfarray.array3d(game.window)
+                        frame = frame.swapaxes(0, 1)  # Fix axis orientation
+                        # Convert to uint8 if needed and ensure RGB format
+                        import numpy as np
+                        if frame.dtype != np.uint8:
+                            frame = frame.astype(np.uint8)
+                        video_frames.append(frame)
+                except Exception as e:
+                    print(f"Warning: Could not capture frame: {e}")
+
+            # If keep_open and game finished, just keep rendering until window is closed
+            if keep_open and game_finished:
+                # Continue rendering but don't step the game
+                continue
+
+        # After inner loop exits, check if we should restart
+        if try_to_win and record_video and not game.won:
+            # Continue outer loop to restart
             continue
+        else:
+            # Exit outer loop (either not trying to win, or we won)
+            break
+
+    # If we exhausted attempts
+    if try_to_win and record_video and attempt >= max_attempts and not game.won:
+        print(f"\n⚠ Reached maximum attempts ({max_attempts}). No winning game found.")
+        if not keep_open:
+            game.close()
+            return
 
 
 def demo_pvp_models(model_paths: list, metadata_list: list,
@@ -675,6 +806,22 @@ class DemoGUI:
                                       variable=self.show_ray_lines_var)
         ray_checkbox.pack(side=tk.LEFT)
 
+        # Record video option
+        video_frame = tk.Frame(settings_frame)
+        video_frame.pack(fill=tk.X, pady=2)
+        self.record_video_var = tk.BooleanVar(value=False)
+        video_checkbox = tk.Checkbutton(video_frame, text="Record Video",
+                                       variable=self.record_video_var,
+                                       command=self.update_video_options)
+        video_checkbox.pack(side=tk.LEFT, padx=5)
+
+        # Try to win option (only enabled when recording)
+        self.try_to_win_var = tk.BooleanVar(value=True)
+        self.try_to_win_checkbox = tk.Checkbutton(video_frame, text="Try to Win (only save if snake wins)",
+                                                  variable=self.try_to_win_var,
+                                                  state=tk.DISABLED)
+        self.try_to_win_checkbox.pack(side=tk.LEFT, padx=5)
+
         # Buttons section
         buttons_frame = tk.Frame(self.root)
         buttons_frame.pack(fill=tk.X, padx=10, pady=10)
@@ -703,6 +850,14 @@ class DemoGUI:
         self.log_text.insert(tk.END, message + "\n")
         self.log_text.see(tk.END)
         self.root.update_idletasks()
+
+    def update_video_options(self):
+        # Enable/disable "Try to Win" checkbox based on "Record Video" state
+        if hasattr(self, 'try_to_win_checkbox'):
+            if self.record_video_var.get():
+                self.try_to_win_checkbox.config(state=tk.NORMAL)
+            else:
+                self.try_to_win_checkbox.config(state=tk.DISABLED)
 
     def scan_models(self):
         self.log("Scanning models directory...")
@@ -831,9 +986,23 @@ class DemoGUI:
         # Get show ray lines option
         show_ray_lines = self.show_ray_lines_var.get()
 
+        # Get record video option
+        record_video = getattr(self, 'record_video_var', None)
+        if record_video is None:
+            record_video = False
+        else:
+            record_video = record_video.get()
+
+        # Get try to win option
+        try_to_win = getattr(self, 'try_to_win_var', None)
+        if try_to_win is None:
+            try_to_win = True
+        else:
+            try_to_win = try_to_win.get()
+
         # Run in separate thread
         thread = threading.Thread(target=demo_single_model,
-                                 args=(model_path, metadata, grid_size, render_delay, True, show_ray_lines),
+                                 args=(model_path, metadata, grid_size, render_delay, True, show_ray_lines, record_video, try_to_win),
                                  daemon=True)
         thread.start()
 

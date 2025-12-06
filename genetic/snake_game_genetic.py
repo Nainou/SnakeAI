@@ -264,6 +264,8 @@ class SnakeGameRL:
             if self.food_position is None:  # Won the game
                 self.done = True
                 self.won = True
+                # Set score to maximum (all cells filled)
+                self.score = self.grid_size * self.grid_size
                 reward = 50  # Huge bonus for winning
                 return self.get_state(), reward, True, {'score': self.score, 'frames': self.frames, 'won': True}
         else:
@@ -279,7 +281,7 @@ class SnakeGameRL:
             self.distance_to_food = new_distance
 
         # SnakeAI termination: die after 100 frames without eating an apple
-        if self.frames_since_last_apple >= 100:
+        if self.frames_since_last_apple >= 200:
             self.done = True
             return self.get_state(), reward, True, {'score': self.score, 'frames': self.frames}
 
@@ -398,6 +400,9 @@ class Individual:
             else:
                 state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
             output = self.network(state_tensor)
+            # Ensure CUDA operations complete before returning
+            if self.device.type == 'cuda':
+                torch.cuda.synchronize(self.device)
             return output.argmax().item()  # Select direction with highest output
 
     def get_weights(self):
@@ -478,48 +483,98 @@ class GeneticAlgorithm:
         # Worker function for threaded evaluation
         individual, game_class, num_games, individual_id = args
 
-        total_score = 0
-        total_frames = 0
-        max_score = 0
-        wins = 0
-        total_fitness = 0
+        try:
+            total_score = 0
+            total_frames = 0
+            max_score = 0
+            wins = 0
+            total_fitness = 0
 
-        for game_num in range(num_games):
-            game = game_class(grid_size=10, display=False)
-            state = game.reset()
+            for game_num in range(num_games):
+                try:
+                    game = game_class(grid_size=10, display=False)
+                    state = game.reset()
 
-            while not game.done:
-                action = individual.act(state)
-                state, reward, done, info = game.step(action)
+                    # Add maximum step limit to prevent infinite loops
+                    max_steps_per_game = 10000
+                    steps = 0
 
-            score = game.score
-            frames = game.frames
-            won = getattr(game, 'won', False)
+                    while not game.done and steps < max_steps_per_game:
+                        try:
+                            action = individual.act(state)
+                            state, reward, done, info = game.step(action)
+                            steps += 1
+                        except Exception as e:
+                            # If there's an error during game execution, break out
+                            print(f"    Individual {individual_id}, game {game_num}: Error during game step: {e}", flush=True)
+                            game.done = True
+                            break
+                except Exception as e:
+                    # If game creation fails, skip this game
+                    print(f"    Individual {individual_id}, game {game_num}: Error creating game: {e}", flush=True)
+                    continue
 
-            total_score += score
-            total_frames += frames
-            max_score = max(max_score, score)
-            if won:
-                wins += 1
+                # If we hit the step limit, mark as done
+                if steps >= max_steps_per_game:
+                    game.done = True
 
-            # SnakeAI fitness formula (per game)
-            # fitness = (frames) + ((2**score) + (score**2.1)*500) - (((.25 * frames)**1.3) * (score**1.2))
-            game_fitness = (frames) + ((2**score) + (score**2.1)*500) - (((.25 * frames)**1.3) * (score**1.2))
-            game_fitness = max(game_fitness, 0.1)  # Ensure minimum positive fitness
-            total_fitness += game_fitness
+                score = game.score
+                frames = game.frames
+                won = getattr(game, 'won', False)
 
-        # Average fitness across all games (SnakeAI approach)
-        avg_fitness = total_fitness / num_games
-        avg_score = total_score / num_games
+                total_score += score
+                total_frames += frames
+                max_score = max(max_score, score)
+                if won:
+                    wins += 1
 
-        individual.fitness = avg_fitness
-        individual.games_played = num_games
-        individual.total_score = total_score
-        individual.max_score = max_score
-        individual.total_steps = total_frames
-        individual.wins = wins
+                # SnakeAI fitness formula (per game)
+                # fitness = (frames) + ((2**score) + (score**2.1)*500) - (((.25 * frames)**1.3) * (score**1.2))
+                game_fitness = (frames) + ((2**score) + (score**2.1)*500) - (((.25 * frames)**1.3) * (score**1.2))
 
-        return individual_id, avg_fitness, avg_score
+                # Add significant bonus for winning (creates better selection pressure)
+                if won:
+                    # Large bonus for winning - this helps differentiate winners from non-winners
+                    # and creates better selection pressure
+                    game_fitness += 10000  # Significant win bonus
+
+                game_fitness = max(game_fitness, 0.1)  # Ensure minimum positive fitness
+                total_fitness += game_fitness
+
+            # Average fitness across all games (SnakeAI approach)
+            avg_fitness = total_fitness / num_games
+            avg_score = total_score / num_games
+
+            # Add win rate bonus to further differentiate individuals
+            # This helps when many individuals are winning - those with higher win rates get better fitness
+            win_rate = wins / num_games if num_games > 0 else 0
+            win_rate_bonus = win_rate * 5000  # Bonus proportional to win rate
+            avg_fitness += win_rate_bonus
+
+            individual.fitness = avg_fitness
+            individual.games_played = num_games
+            individual.total_score = total_score
+            individual.max_score = max_score
+            individual.total_steps = total_frames
+            individual.wins = wins
+
+            return individual_id, avg_fitness, avg_score
+        except Exception as e:
+            # Handle exceptions gracefully - return default fitness values
+            with self.print_lock:
+                print(f"Error evaluating individual {individual_id}: {e}")
+                import traceback
+                traceback.print_exc()
+
+            # Return default values so training can continue
+            individual.fitness = 0.1
+            individual.games_played = num_games
+            individual.total_score = 0
+            individual.max_score = 0
+            individual.total_steps = 0
+            individual.wins = 0
+
+            return individual_id, 0.1, 0.0
 
     def evaluate_population(self, game_class, num_games=3, verbose=False, progress_callback=None):
         # Evaluate the entire population's fitness using threading
@@ -533,22 +588,47 @@ class GeneticAlgorithm:
                      for i, individual in enumerate(self.population)]
 
         completed = 0
+        errors = []
         # Use ThreadPoolExecutor for parallel evaluation
         with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
             # Submit all tasks
             futures = {executor.submit(self.evaluate_individual_worker, args): args[3]
                       for args in eval_args}
 
-            # Process completed tasks
-            for future in as_completed(futures):
-                individual_id, fitness, avg_score = future.result()
-                completed += 1
+            # Process completed tasks with timeout handling
+            # Set a reasonable timeout (30 minutes total should be enough for most cases)
+            total_timeout = 1800  # 30 minutes total
 
-                if progress_callback:
-                    progress_callback(completed, self.population_size)
-                elif verbose and completed % max(1, self.population_size // 10) == 0:
-                    with self.print_lock:
-                        print(f"  Progress: {completed}/{self.population_size}")
+            try:
+                for future in as_completed(futures, timeout=total_timeout):
+                    try:
+                        individual_id, fitness, avg_score = future.result()
+                        completed += 1
+
+                        if progress_callback:
+                            progress_callback(completed, self.population_size)
+                        elif verbose and completed % max(1, self.population_size // 10) == 0:
+                            with self.print_lock:
+                                print(f"  Progress: {completed}/{self.population_size}")
+                    except Exception as e:
+                        individual_id = futures.get(future, "unknown")
+                        errors.append(f"Individual {individual_id}: {str(e)}")
+                        completed += 1
+                        with self.print_lock:
+                            print(f"  Warning: Error processing individual {individual_id}: {e}", flush=True)
+            except TimeoutError:
+                with self.print_lock:
+                    print(f"  ERROR: Evaluation timed out after {total_timeout}s", flush=True)
+                    print(f"  Completed: {completed}/{self.population_size}", flush=True)
+                    # Cancel remaining futures
+                    for future in futures:
+                        if not future.done():
+                            future.cancel()
+                raise RuntimeError(f"Population evaluation timed out. Only {completed}/{self.population_size} individuals completed.")
+
+        if errors and verbose:
+            with self.print_lock:
+                print(f"  Warnings: {len(errors)} individuals had errors during evaluation")
 
         # Sort population by fitness (descending)
         self.population.sort(key=lambda x: x.fitness, reverse=True)
@@ -821,7 +901,7 @@ class GeneticAlgorithm:
     def load_individual(self, filepath):
         # Load a neural network into a new individual
         individual = Individual(input_size=32, hidden_size1=20, hidden_size2=12, output_size=4, device=self.device)
-        individual.network.load_state_dict(torch.load(filepath, map_location=self.device))
+        individual.network.load_state_dict(torch.load(filepath, map_location=self.device, weights_only=False))
         return individual
 
     def save_state(self, filepath):
@@ -848,7 +928,7 @@ class GeneticAlgorithm:
 
     def load_state(self, filepath):
         # Load the complete GeneticAlgorithm state from a saved checkpoint
-        state = torch.load(filepath, map_location=self.device)
+        state = torch.load(filepath, map_location=self.device, weights_only=False)
 
         self.generation = state['generation']
         self.best_fitness_history = state['best_fitness_history']
@@ -894,7 +974,23 @@ def resume_from_checkpoint(checkpoint_path, generations=50, population_size=50, 
             num_offspring=num_offspring
         )
         ga.load_state(checkpoint_path)
-        start_gen = ga.generation
+        state_gen = ga.generation  # Store original generation from state
+
+        # Extract generation number from filename (more reliable than state file)
+        gen_match = re.search(r'gen[_\s]*(\d+)', checkpoint_path.stem.lower())
+        if gen_match:
+            filename_gen = int(gen_match.group(1))
+            # Use filename generation if it's higher (more reliable)
+            if filename_gen > state_gen:
+                start_gen = filename_gen
+                ga.generation = filename_gen  # Update the generation in the GA object
+                if not quiet:
+                    print(f"Note: Using generation {filename_gen} from filename (state had {state_gen})")
+            else:
+                start_gen = state_gen
+        else:
+            start_gen = state_gen
+
         if not quiet:
             print(f"Resuming from generation {start_gen} (full state loaded)")
     else:

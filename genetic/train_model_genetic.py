@@ -4,16 +4,30 @@ import multiprocessing
 from pathlib import Path
 import re
 
-def get_optimal_threads(population_size=200):
+def get_optimal_threads(population_size=200, device=None):
     cpu_count = multiprocessing.cpu_count()
     # Scale threads with population size, but cap reasonably
     # For larger populations, use more threads
-    if population_size >= 500:
-        return min(cpu_count, 16)  # Up to 16 threads for large populations
-    elif population_size >= 200:
-        return min(cpu_count - 1, 12)  # Up to 12 threads for medium populations
+    # For CUDA, use fewer threads to avoid GPU contention
+    import torch
+    is_cuda = device is not None and device.type == 'cuda' if device else torch.cuda.is_available()
+
+    if is_cuda:
+        # CUDA: Use fewer threads to avoid GPU contention and potential deadlocks
+        if population_size >= 500:
+            return min(8, cpu_count)  # Max 8 threads for CUDA
+        elif population_size >= 200:
+            return min(6, cpu_count)
+        else:
+            return min(4, cpu_count)
     else:
-        return min(max(2, cpu_count - 1), 8)  # Default: leave 1 core free, max 8 threads
+        # CPU: Can use more threads
+        if population_size >= 500:
+            return min(cpu_count, 16)  # Up to 16 threads for large populations
+        elif population_size >= 200:
+            return min(cpu_count - 1, 12)  # Up to 12 threads for medium populations
+        else:
+            return min(max(2, cpu_count - 1), 8)  # Default: leave 1 core free, max 8 threads
 
 if __name__ == "__main__":
     # Example usage
@@ -36,9 +50,16 @@ if __name__ == "__main__":
     # Use SnakeAI approach: 500 parents, 1000 offspring
     num_parents = 500
     num_offspring = 1000
-    threads = get_optimal_threads(num_parents)
+
+    # Determine device first to calculate optimal threads
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+    threads = get_optimal_threads(num_parents, device)
     print(f"Parents: {num_parents}, Offspring: {num_offspring}")
-    print(f"Threads: {threads}")
+    print(f"Threads: {threads} (optimized for {device.type.upper()})")
     print()
 
     # Check for existing checkpoints to resume from
