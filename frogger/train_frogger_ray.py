@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import re
 import time
+import os
 
 
 class DQN(nn.Module):
@@ -43,7 +44,7 @@ class DQNAgent:
 
         self.memory = deque(maxlen=100000)
         self.epsilon = 1.0
-        self.epsilon_min = 0.1
+        self.epsilon_min = 0.01
         self.epsilon_decay = 0.9995
         self.gamma = 0.95
         self.learning_rate = lr
@@ -148,10 +149,10 @@ class DQNAgent:
         self.epsilon = checkpoint["epsilon"]
 
 
-def train_agent(episodes=2000, batch_size=64, update_target_every=20):
+def train_agent(episodes=2000, batch_size=64, update_target_every=10):
     from frogger_game_ray import FroggerGameRL
 
-    game = FroggerGameRL(grid_width=10, grid_height=12, display=False)
+    game = FroggerGameRL(grid_width=20, grid_height=24, display=False)
     state_size = game.get_state_size()
     action_size = 5  # stay, up, down, left, right
 
@@ -211,7 +212,7 @@ def train_agent(episodes=2000, batch_size=64, update_target_every=20):
             epoch_max_score = 0
 
         if episode % 500 == 0 and episode > 0:
-            agent.save("frogger/saved/frogger_model_episode_{episode}.pth")
+            agent.save("saved/frogger_model_episode_{episode}.pth")
 
     if episodes % 100 != 0:
         epoch_max_scores.append(epoch_max_score)
@@ -241,12 +242,13 @@ def test_agent(agent, num_games=10, display=True):
     from frogger_game_ray import FroggerGameRL
     import pygame
 
-    game = FroggerGameRL(grid_width=10, grid_height=12, display=display, render_delay=5)
+    game = FroggerGameRL(grid_width=20, grid_height=24, display=display, render_delay=20)
     agent.epsilon = 0.0  # greedy policy
 
     scores = []
 
     for i in range(num_games):
+        os.system("pause")
         state = game.reset()
 
         while not game.done:

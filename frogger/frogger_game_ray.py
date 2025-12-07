@@ -5,21 +5,24 @@ import random
 
 class FroggerGameRL:
     """
-    Simple Frogger-like grid world:
+    Simple Frogger-like grid world with cars and trucks:
 
     - Grid with width x height.
     - Frog moves on a coarse grid (cells).
-    - Cars move on a finer grid horizontally: each cell is divided into 3 "sub-squares".
-      * Each car occupies 3 consecutive sub-squares (≈ 1 full cell in width).
-      * On each step, cars move by 1 sub-square -> smoother horizontal motion.
-      * Collision if ANY of the car's 3 sub-squares overlap with ANY of the frog cell's 3 sub-squares.
+    - Vehicles (cars & trucks) move on a finer grid horizontally:
+      * Each cell is divided into 3 "sub-squares".
+      * Cars occupy 3 consecutive sub-squares (≈ 1 full cell in width).
+      * Trucks occupy 6 consecutive sub-squares (≈ 2 cells in width).
+      * On each step, vehicles move by 1 sub-square -> smoother motion.
+      * Collision if ANY of a vehicle's sub-squares overlap with ANY of the frog
+        cell's 3 sub-squares.
 
     - Frog starts at bottom row (start_row = height - 1), in the middle column.
     - Goal is the top row (row 0).
-    - Rows 1..height-2 are road lanes with cars moving left/right.
+    - Rows 1..height-2 are road lanes with vehicles moving left/right.
 
     Episode ends when:
-        * Frog collides with a car (negative reward).
+        * Frog collides with a vehicle (negative reward).
         * Score reaches target_score (win).
         * Max steps exceeded (small negative).
 
@@ -44,10 +47,15 @@ class FroggerGameRL:
         # Target score: number of successful crossings to "win" the game
         self.target_score = 10
 
-        # Underlying horizontal sub-grid for cars
+        # Underlying horizontal sub-grid for vehicles
         # Each cell is split into 3 sub-squares
         self.subcells_per_cell = 3
         self.lane_length_sub = self.grid_width * self.subcells_per_cell
+
+        # Vehicle lengths in subcells
+        self.car_length_sub = self.subcells_per_cell          # 1 cell
+        self.truck_length_sub = 2 * self.subcells_per_cell   # 2 cells
+        self.truck_probability = 0.3  # probability a spawned vehicle is a truck
 
         # Pygame setup
         if self.display:
@@ -58,7 +66,8 @@ class FroggerGameRL:
             self.square_h = self.height // self.grid_height
             self.window = pygame.display.set_mode((self.width, self.height))
             pygame.display.set_caption("Frogger RL Training")
-            self.clock = pygame.time.Clock()
+            pygame.clock = pygame.time.Clock()
+            self.clock = pygame.clock
 
             # Colors
             self.WHITE = (255, 255, 255)
@@ -67,7 +76,7 @@ class FroggerGameRL:
             self.DARK_GRAY = (80, 80, 80)
             self.GREEN = (0, 200, 0)
             self.RED = (200, 0, 0)
-            self.BLUE = (0, 0, 200)
+            self.BLUE = (0, 0, 200)      # used for goal & trucks
             self.LIGHT_GREEN = (0, 255, 0)
             self.YELLOW = (255, 255, 0)
 
@@ -78,7 +87,8 @@ class FroggerGameRL:
 
         # Per-lane direction: +1 = move right, -1 = move left
         self.lane_directions = {}
-        # Per-lane cars: dict[row] -> list of base subcell positions (each car occupies 3 subcells)
+        # Per-lane vehicles: dict[row] -> list of vehicle dicts
+        # vehicle = {"base": int, "length": int, "type": "car" | "truck"}
         self.cars = {}
 
         # Game state
@@ -111,15 +121,31 @@ class FroggerGameRL:
                 direction = -1  # left
             self.lane_directions[row] = direction
 
-            # Initialize cars in subcell space
-            num_cars = max(1, self.grid_width // 3)  # e.g. 2–3 cars on 10-wide grid
-            spacing_sub = self.lane_length_sub // num_cars
-            lane_cars = []
+            # Initialize vehicles in subcell space
+            # We'll keep density similar to cars-only version; some will be trucks.
+            num_vehicles = max(1, self.grid_width // 6)  # e.g. 2–3 vehicles on 10-wide grid
+            spacing_sub = random.randint(7, self.lane_length_sub // num_vehicles)
+            lane_vehicles = []
             start_offset_sub = random.randint(0, spacing_sub - 1)
-            for i in range(num_cars):
+
+            for i in range(num_vehicles):
                 base = (start_offset_sub + i * spacing_sub) % self.lane_length_sub
-                lane_cars.append(base)
-            self.cars[row] = lane_cars
+
+                # Randomly choose car vs truck
+                if random.random() < self.truck_probability:
+                    vtype = "truck"
+                    length = self.truck_length_sub
+                else:
+                    vtype = "car"
+                    length = self.car_length_sub
+
+                lane_vehicles.append({
+                    "base": base,
+                    "length": length,
+                    "type": vtype
+                })
+
+            self.cars[row] = lane_vehicles
 
         self.steps = 0
         self.done = False
@@ -140,44 +166,68 @@ class FroggerGameRL:
         start = cell_x * self.subcells_per_cell
         return {start + i for i in range(self.subcells_per_cell)}
 
-    def _car_subcells_for_base(self, base: int):
+    def _vehicle_subcells_for_base(self, base: int, length_sub: int):
         """
-        Return the set of subcell indices (in [0, lane_length_sub)) occupied by a car
-        whose "base" (leftmost) subcell index is 'base'.
-
-        Each car occupies 3 consecutive subcells:
-            base -> {base, base+1, base+2} (wrapped modulo lane_length_sub)
+        Return the set of subcell indices (in [0, lane_length_sub)) occupied by a vehicle
+        whose "base" (leftmost) subcell index is 'base' and which spans length_sub
+        subcells horizontally.
         """
-        return { (base + i) % self.lane_length_sub for i in range(self.subcells_per_cell) }
+        return {(base + i) % self.lane_length_sub for i in range(length_sub)}
 
     def _is_car_at(self, cell_x, cell_y):
         """
-        Return True if a car overlaps the coarse cell (cell_x, cell_y) at subcell resolution.
+        Return True if ANY vehicle overlaps the coarse cell (cell_x, cell_y)
+        at subcell resolution.
 
-        Overlap if ANY of the car's 3 sub-squares intersect ANY of the 3 sub-squares of the cell.
+        Overlap if ANY of the vehicle's sub-squares intersect ANY of the 3 sub-squares
+        of the cell.
         """
         if cell_y not in self.cars:
             return False
 
         frog_subcells = self._frog_subcells_for_cell_x(cell_x)
 
-        for base in self.cars[cell_y]:
-            car_subcells = self._car_subcells_for_base(base)
+        for vehicle in self.cars[cell_y]:
+            car_subcells = self._vehicle_subcells_for_base(
+                vehicle["base"],
+                vehicle["length"]
+            )
             if frog_subcells & car_subcells:
                 return True
 
         return False
 
     def _move_cars(self):
-        """Move all cars by 1 subcell in their lane direction, with wrapping."""
+        """Move all vehicles by 1 subcell in their lane direction, with wrapping."""
         new_cars = {}
         for row in self.lane_rows:
             direction = self.lane_directions[row]
-            new_positions = []
-            for base in self.cars[row]:
-                new_base = (base + direction) % self.lane_length_sub
-                new_positions.append(new_base)
-            new_cars[row] = new_positions
+            new_vehicles = []
+            for vehicle in self.cars[row]:
+                car_spawning = 0
+                new_base = vehicle["base"] + direction
+                # make sure new vehicles spawn at the edge of the grid
+                if direction == 1 and new_base > self.lane_length_sub:
+                    car_spawning = 1
+                    new_base = -6
+                elif direction == -1 and new_base < -6:
+                    car_spawning = 1
+                    new_base = self.lane_length_sub + 6
+                if car_spawning:
+                    # reroll car type at new car spawn
+                    if random.random() < self.truck_probability:
+                        vehicle["type"] = "truck"
+                        vehicle["length"] = self.truck_length_sub
+                    else:
+                        vehicle["type"] = "car"
+                        vehicle["length"] = self.car_length_sub 
+
+                new_vehicles.append({
+                    "base": new_base,
+                    "length": vehicle["length"],
+                    "type": vehicle["type"],
+                })
+            new_cars[row] = new_vehicles
         self.cars = new_cars
 
     def step(self, action):
@@ -222,7 +272,7 @@ class FroggerGameRL:
         elif self.frog_y > old_y:
             reward -= 1.0   # moved away from goal
 
-        # ----- 3) Goal check (before cars move; no cars on goal row) -----
+        # ----- 3) Goal check (before vehicles move; no traffic on goal row) -----
         if self.frog_y == self.goal_row:
             self.score += 1
             reward += 20.0
@@ -242,10 +292,10 @@ class FroggerGameRL:
         # Small time penalty to avoid endless wandering
         reward -= 0.01
 
-        # ----- 4) Move cars on the subcell grid -----
+        # ----- 4) Move vehicles on the subcell grid -----
         self._move_cars()
 
-        # ----- 5) Collision check AFTER cars have moved -----
+        # ----- 5) Collision check after vehicles have moved -----
         if self._is_car_at(self.frog_x, self.frog_y):
             self.done = True
             reward = -10.0
@@ -256,6 +306,7 @@ class FroggerGameRL:
         if self.steps >= self.max_steps and not self.done:
             self.done = True
             reward -= 5.0
+            print(f"DEBUG: ran out of time at score {self.score}")
             info["timeout"] = True
 
         return self.get_state(), reward, self.done, info
@@ -264,15 +315,15 @@ class FroggerGameRL:
 
     def get_state(self):
         """
-        State vector:
+        State vector (unchanged layout):
 
         - Frog position (normalized): 2 values
         - Vertical direction to goal: 1 value in {-1, 0, 1}
         - Danger in 8 neighboring cells (N, NE, E, SE, S, SW, W, NW): 8 values in {0,1}
-        - Distance to nearest car in same column above frog (normalized): 1 value
-        - Distance to nearest car in same column below frog (normalized): 1 value
+        - Distance to nearest vehicle in same column above frog (normalized): 1 value
+        - Distance to nearest vehicle in same column below frog (normalized): 1 value
         - Lane direction at frog's row (one-hot: left/right/none): 3 values
-        - Relative horizontal position of nearest car in frog's lane (subcell-aware, normalized): 1 value
+        - Relative horizontal position of nearest vehicle in frog's lane (subcell-aware, normalized): 1 value
         - Normalized step count: 1 value
 
         Total: 2 + 1 + 8 + 1 + 1 + 3 + 1 + 1 = 18
@@ -285,7 +336,6 @@ class FroggerGameRL:
         state.extend([fx, fy])
 
         # 2) Vertical direction to goal
-        # goal at row 0 -> if frog_y > 0, direction is -1; if frog_y == 0, 0
         if self.frog_y > self.goal_row:
             goal_dir_y = -1.0
         elif self.frog_y < self.goal_row:
@@ -295,7 +345,6 @@ class FroggerGameRL:
         state.append(goal_dir_y)
 
         # 3) Danger in 8 neighboring cells
-        # Off-grid is considered dangerous; car presence at subcell resolution is dangerous.
         neighbor_offsets = [
             (0, -1),   # N
             (1, -1),   # NE
@@ -317,7 +366,7 @@ class FroggerGameRL:
                 danger = 1
             state.append(float(danger))
 
-        # 4) Distance to nearest car in same column above frog (in cell units)
+        # 4) Distance to nearest vehicle in same column above frog (in cell units)
         dist_up = 0.0
         found = False
         for y in range(self.frog_y - 1, -1, -1):
@@ -326,10 +375,10 @@ class FroggerGameRL:
                 found = True
                 break
         if not found:
-            dist_up = 1.0  # no car above -> treat as far away
+            dist_up = 1.0  # no vehicle above -> treat as far away
         state.append(dist_up)
 
-        # 5) Distance to nearest car in same column below frog (in cell units)
+        # 5) Distance to nearest vehicle in same column below frog (in cell units)
         dist_down = 0.0
         found = False
         for y in range(self.frog_y + 1, self.grid_height):
@@ -353,30 +402,78 @@ class FroggerGameRL:
             lane_dir_one_hot[2] = 1.0  # safe row (start or goal)
         state.extend(lane_dir_one_hot)
 
-        # 7) Relative horizontal position of nearest car in the frog's lane (subcell-aware)
-        #    Negative -> car to the left, positive -> car to the right, 0 if aligned or no cars.
+        # 7) Relative horizontal position of nearest vehicle in frog's lane (subcell-aware)
         rel_car_pos = 0.0
         if self.frog_y in self.lane_rows:
-            lane_cars = self.cars[self.frog_y]
-            if lane_cars:
+            lane_vehicles = self.cars[self.frog_y]
+            if lane_vehicles:
                 frog_center = self.frog_x + 0.5
                 min_abs_dist = None
                 best_rel = 0.0
 
-                for base in lane_cars:
-                    # Car center in "cell units": base is subcell index, each cell has subcells_per_cell subcells.
-                    car_center_cell = (base + self.subcells_per_cell / 2.0) / self.subcells_per_cell
-                    d = car_center_cell - frog_center  # positive if car to the right
+                for vehicle in lane_vehicles:
+                    base = vehicle["base"]
+                    length = vehicle["length"]
+                    # Vehicle center in "cell units"
+                    car_center_cell = (base + length / 2.0) / self.subcells_per_cell
+                    d = car_center_cell - frog_center  # positive if vehicle to the right
                     if (min_abs_dist is None) or (abs(d) < min_abs_dist):
                         min_abs_dist = abs(d)
                         best_rel = d
 
-                # Normalize by grid_width so typical values lie in [-1, 1] range
                 rel_car_pos = max(-1.0, min(1.0, best_rel / self.grid_width))
 
         state.append(rel_car_pos)
 
-        # 8) Normalized step count
+        # 8) Relative horizontal position of nearest vehicle in next lane (subcell-aware)
+        next_car_pos = 0.0
+        next_y = self.frog_y - 1
+        if next_y in self.lane_rows:
+            lane_vehicles = self.cars[next_y]
+            if lane_vehicles:
+                frog_center = self.frog_x + 0.5
+                min_abs_dist = None
+                best_rel = 0.0
+
+                for vehicle in lane_vehicles:
+                    base = vehicle["base"]
+                    length = vehicle["length"]
+                    # Vehicle center in "cell units"
+                    car_center_cell = (base + length / 2.0) / self.subcells_per_cell
+                    d = car_center_cell - frog_center  # positive if vehicle to the right
+                    if (min_abs_dist is None) or (abs(d) < min_abs_dist):
+                        min_abs_dist = abs(d)
+                        best_rel = d
+
+                next_car_pos = max(-1.0, min(1.0, best_rel / self.grid_width))
+
+        state.append(next_car_pos)
+
+        # 9) Relative horizontal position of nearest vehicle in previous lane (subcell-aware)
+        prev_car_pos = 0.0
+        prev_y = self.frog_y + 1
+        if prev_y in self.lane_rows:
+            lane_vehicles = self.cars[prev_y]
+            if lane_vehicles:
+                frog_center = self.frog_x + 0.5
+                min_abs_dist = None
+                best_rel = 0.0
+
+                for vehicle in lane_vehicles:
+                    base = vehicle["base"]
+                    length = vehicle["length"]
+                    # Vehicle center in "cell units"
+                    car_center_cell = (base + length / 2.0) / self.subcells_per_cell
+                    d = car_center_cell - frog_center  # positive if vehicle to the right
+                    if (min_abs_dist is None) or (abs(d) < min_abs_dist):
+                        min_abs_dist = abs(d)
+                        best_rel = d
+
+                prev_car_pos = max(-1.0, min(1.0, best_rel / self.grid_width))
+
+        state.append(prev_car_pos)
+
+        # 10) Normalized step count
         step_norm = self.steps / self.max_steps
         state.append(step_norm)
 
@@ -413,28 +510,38 @@ class FroggerGameRL:
                 color = self.GRAY
             pygame.draw.rect(self.window, color, rect)
 
-        # Draw cars (visually thinner vertically, with yellow stripe on movement side)
+        # Draw vehicles (visually thinner vertically, with yellow stripe on movement side)
         car_margin = int(self.square_h * 0.15)      # shrink from top and bottom (visual only)
         stripe_width = max(2, self.square_w // 8)   # width of the yellow direction stripe
 
         for row in self.lane_rows:
             lane_dir = self.lane_directions[row]    # +1 = right, -1 = left
-            for base in self.cars[row]:
+            for vehicle in self.cars[row]:
+                base = vehicle["base"]
+                vtype = vehicle["type"]
+
                 # Convert base subcell index to a float cell position
-                # base in [0, lane_length_sub), so cell_pos in [0, grid_width)
                 cell_pos_float = base / self.subcells_per_cell
                 pixel_x = int(cell_pos_float * self.square_w)
 
-                # Base car rectangle (1 cell wide), thinner vertically
+                # Width: cars = 1 cell, trucks = 2 cells
+                if vtype == "truck":
+                    rect_width = 2 * self.square_w
+                    color = self.BLUE
+                else:
+                    rect_width = self.square_w
+                    color = self.RED
+
+                # Base vehicle rectangle, thinner vertically
                 car_rect = pygame.Rect(
                     pixel_x,
                     row * self.square_h + car_margin,
-                    self.square_w,
+                    rect_width,
                     self.square_h - 2 * car_margin
                 )
-                pygame.draw.rect(self.window, self.RED, car_rect)
+                pygame.draw.rect(self.window, color, car_rect)
 
-                # Yellow stripe indicating direction of movement (full height of the car)
+                # Yellow stripe indicating direction of movement (full height of the vehicle)
                 if lane_dir == 1:
                     # moving right → stripe on the right edge
                     stripe_rect = pygame.Rect(
