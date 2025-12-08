@@ -39,7 +39,7 @@ if __name__ == "__main__":
     # Check CUDA availability
     if torch.cuda.is_available():
         device = torch.device("cuda")
-        print(f"✓ CUDA available - Using GPU: {torch.cuda.get_device_name(0)}")
+        print(f"CUDA available - Using GPU: {torch.cuda.get_device_name(0)}")
         print(f"  GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
     else:
         device = torch.device("cpu")
@@ -63,7 +63,7 @@ if __name__ == "__main__":
     print()
 
     # Check for existing checkpoints to resume from
-    saved_dir = Path('saved')
+    saved_dir = Path('genetic/saved')
     resume_from = None
 
     # Look for full state files first (best option)
@@ -115,7 +115,7 @@ if __name__ == "__main__":
     )
 
     # Get the actual saved filename
-    saved_dir = Path('saved')
+    saved_dir = Path('genetic/saved')
     final_models = list(saved_dir.glob('genetic_*_final.pth'))
     if final_models:
         print(f"\nModel saved as '{final_models[0].name}'")

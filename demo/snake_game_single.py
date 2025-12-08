@@ -530,9 +530,11 @@ class SnakeGameSingle:
         self.alive = True
         self.score = 0
         self.steps = 0
-        self.max_steps = self.grid_size * self.grid_size * 20
+        self.last_food_step = 0
+        self.max_steps = 20000
         self.done = False
         self.won = False
+        self.death_reason = None
         self.food_position = self._place_food()
         self.distance_to_food = self._calculate_distance_to_food()
         if self.use_pixel_state:
@@ -552,6 +554,8 @@ class SnakeGameSingle:
         return None
 
     def _calculate_distance_to_food(self):
+        if self.food_position is None:
+            return 0  # No food (game won)
         head = self.snake_positions[0]
         return abs(head[0] - self.food_position[0]) + abs(head[1] - self.food_position[1])
 
@@ -565,14 +569,15 @@ class SnakeGameSingle:
         # Direction of food relative to head (2 values)
         food_dir_x = 0
         food_dir_y = 0
-        if self.food_position[0] > head[0]:
-            food_dir_x = 1
-        elif self.food_position[0] < head[0]:
-            food_dir_x = -1
-        if self.food_position[1] > head[1]:
-            food_dir_y = 1
-        elif self.food_position[1] < head[1]:
-            food_dir_y = -1
+        if self.food_position is not None:
+            if self.food_position[0] > head[0]:
+                food_dir_x = 1
+            elif self.food_position[0] < head[0]:
+                food_dir_x = -1
+            if self.food_position[1] > head[1]:
+                food_dir_y = 1
+            elif self.food_position[1] < head[1]:
+                food_dir_y = -1
 
         state.extend([food_dir_x, food_dir_y])
 
@@ -605,8 +610,13 @@ class SnakeGameSingle:
         state.extend(dangers)  # 8 values
 
         # Distance to food (normalized)
-        dist_x = (self.food_position[0] - head[0]) / self.grid_size
-        dist_y = (self.food_position[1] - head[1]) / self.grid_size
+        if self.food_position is not None:
+            dist_x = (self.food_position[0] - head[0]) / self.grid_size
+            dist_y = (self.food_position[1] - head[1]) / self.grid_size
+        else:
+            # No food (game won), use default values
+            dist_x = 0.0
+            dist_y = 0.0
         state.extend([dist_x, dist_y])  # 2 values
 
         # Snake length (normalized)
@@ -659,17 +669,21 @@ class SnakeGameSingle:
             apple_distances = []
             for dx, dy in directions:
                 # Calculate distance to food in this direction
-                food_dx = self.food_position[0] - head[0]
-                food_dy = self.food_position[1] - head[1]
+                if self.food_position is not None:
+                    food_dx = self.food_position[0] - head[0]
+                    food_dy = self.food_position[1] - head[1]
 
-                # Check if food is in this direction (dot product > 0)
-                if (dx * food_dx + dy * food_dy) > 0:
-                    # Calculate Manhattan distance
-                    manhattan = abs(food_dx) + abs(food_dy)
-                    dist = manhattan / (self.grid_size * 2)
-                    dist = min(dist, 1.0)
+                    # Check if food is in this direction (dot product > 0)
+                    if (dx * food_dx + dy * food_dy) > 0:
+                        # Calculate Manhattan distance
+                        manhattan = abs(food_dx) + abs(food_dy)
+                        dist = manhattan / (self.grid_size * 2)
+                        dist = min(dist, 1.0)
+                    else:
+                        dist = 1.0  # Food not in this direction
                 else:
-                    dist = 1.0  # Food not in this direction
+                    # No food (game won), use default distance
+                    dist = 1.0
 
                 apple_distances.append(dist)
 
@@ -847,10 +861,24 @@ class SnakeGameSingle:
             self.alive = False
             self.done = True
             reward = -20
-            if self.use_pixel_state:
-                return self.get_pixel_state(), reward, True, {'score': self.score}
+            # Determine specific death reason
+            if new_head[0] < 0:
+                self.death_reason = f"Hit left wall at position ({new_head[0]}, {new_head[1]})"
+            elif new_head[0] >= self.grid_size:
+                self.death_reason = f"Hit right wall at position ({new_head[0]}, {new_head[1]})"
+            elif new_head[1] < 0:
+                self.death_reason = f"Hit top wall at position ({new_head[0]}, {new_head[1]})"
+            elif new_head[1] >= self.grid_size:
+                self.death_reason = f"Hit bottom wall at position ({new_head[0]}, {new_head[1]})"
+            elif new_head in self.snake_positions:
+                body_index = list(self.snake_positions).index(new_head)
+                self.death_reason = f"Hit own body at position ({new_head[0]}, {new_head[1]}) - collided with body segment #{body_index}"
             else:
-                return self.get_state(), reward, True, {'score': self.score}
+                self.death_reason = f"Collision at position ({new_head[0]}, {new_head[1]})"
+            if self.use_pixel_state:
+                return self.get_pixel_state(), reward, True, {'score': self.score, 'death_reason': self.death_reason, 'death_position': new_head}
+            else:
+                return self.get_state(), reward, True, {'score': self.score, 'death_reason': self.death_reason, 'death_position': new_head}
 
         # Move snake
         self.snake_positions.appendleft(new_head)
@@ -884,18 +912,26 @@ class SnakeGameSingle:
         # Check if exceeded max steps
         if self.steps >= self.max_steps:
             self.done = True
+            self.alive = False
+            self.death_reason = f"Exceeded max steps ({self.max_steps})"
             reward = -10
 
-        if self.steps - self.last_food_step >= 100:
+        if self.steps - self.last_food_step >= 500:
             self.done = True
+            self.alive = False
+            self.death_reason = "No food eaten for 500 steps"
             reward = -100
 
         reward -= 0.01
 
+        info = {'score': self.score}
+        if self.death_reason:
+            info['death_reason'] = self.death_reason
+
         if self.use_pixel_state:
-            return self.get_pixel_state(), reward, self.done, {'score': self.score}
+            return self.get_pixel_state(), reward, self.done, info
         else:
-            return self.get_state(), reward, self.done, {'score': self.score}
+            return self.get_state(), reward, self.done, info
 
     def render(self):
         if not self.display:

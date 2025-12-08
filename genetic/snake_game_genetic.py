@@ -61,6 +61,7 @@ class SnakeGameRL:
 
         # Food initialization
         self.food_position = self._place_food()
+        self.initial_food_position = self.food_position  # Track initial food position
 
         # Game state
         self.score = 0
@@ -257,6 +258,9 @@ class SnakeGameRL:
         if new_head == self.food_position:
             self.score += 1
             self.frames_since_last_apple = 0  # Reset frame counter on eating
+            # Clear initial food tracking once first food is eaten
+            if self.score == 1:
+                self.initial_food_position = None
             reward = 30  # Big reward for eating food
 
             # Place new food
@@ -280,8 +284,16 @@ class SnakeGameRL:
                 reward = -3  # Getting farther from food
             self.distance_to_food = new_distance
 
-        # SnakeAI termination: die after 100 frames without eating an apple
-        if self.frames_since_last_apple >= 200:
+        # SnakeAI termination: die after 200 frames without eating an apple
+        # Also check if first food hasn't been eaten within timeout
+        if self.frames_since_last_apple >= 300:
+            # Special check: if we haven't eaten the first food yet, and it's still the same food
+            if (self.score == 0 and self.initial_food_position is not None and
+                self.food_position == self.initial_food_position):
+                # First food hasn't been eaten within timeout - terminate to prevent infinite loops
+                self.done = True
+                return self.get_state(), reward, True, {'score': self.score, 'frames': self.frames}
+            # General timeout: no food eaten for 200 frames
             self.done = True
             return self.get_state(), reward, True, {'score': self.score, 'frames': self.frames}
 
@@ -1062,9 +1074,9 @@ def resume_from_checkpoint(checkpoint_path, generations=50, population_size=50, 
 
         # Save best individual periodically
         if gen % 10 == 0:
-            ga.save_best(f'saved/genetic_snake_gen_{gen}.pth')
+            ga.save_best(f'genetic/saved/genetic_snake_gen_{gen}.pth')
             # Also save full state for better resume capability
-            ga.save_state(f'saved/genetic_snake_gen_{gen}.state.pth')
+            ga.save_state(f'genetic/saved/genetic_snake_gen_{gen}.state.pth')
 
         # Evolve to next generation (except for the last generation)
         if gen < generations - 1:
@@ -1079,8 +1091,8 @@ def resume_from_checkpoint(checkpoint_path, generations=50, population_size=50, 
             print(f"Generation {gen} complete: Best={best_score:.1f}, Avg={avg_score:.1f} ({gen_time:.1f}s)")
 
     # Save final best individual
-    ga.save_best('saved/genetic_snake_final.pth')
-    ga.save_state('saved/genetic_snake_final.state.pth')
+    ga.save_best('genetic/saved/genetic_snake_final.pth')
+    ga.save_state('genetic/saved/genetic_snake_final.state.pth')
 
     elapsed_time = time.time() - start_time
 
@@ -1169,9 +1181,9 @@ def train_genetic_algorithm(generations=50, population_size=50, games_per_eval=3
 
         # Save best individual periodically
         if gen % 10 == 0:
-            ga.save_best(f'saved/genetic_snake_gen_{gen}.pth')
+            ga.save_best(f'genetic/saved/genetic_snake_gen_{gen}.pth')
             # Also save full state for better resume capability
-            ga.save_state(f'saved/genetic_snake_gen_{gen}.state.pth')
+            ga.save_state(f'genetic/saved/genetic_snake_gen_{gen}.state.pth')
 
         # Evolve to next generation (except for the last generation)
         if gen < generations - 1:
@@ -1186,8 +1198,8 @@ def train_genetic_algorithm(generations=50, population_size=50, games_per_eval=3
             print(f"Generation {gen} complete: Best={best_score:.1f}, Avg={avg_score:.1f} ({gen_time:.1f}s)")
 
     # Save final best individual
-    ga.save_best('saved/genetic_snake_final.pth')
-    ga.save_state('saved/genetic_snake_final.state.pth')
+    ga.save_best('genetic/saved/genetic_snake_final.pth')
+    ga.save_state('genetic/saved/genetic_snake_final.state.pth')
 
     elapsed_time = time.time() - start_time
 

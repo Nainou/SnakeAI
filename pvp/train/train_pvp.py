@@ -330,7 +330,7 @@ def main():
     # Check CUDA availability
     if torch.cuda.is_available():
         device = torch.device("cuda")
-        print(f"✓ CUDA available - Using GPU: {torch.cuda.get_device_name(0)}")
+        print(f"CUDA available - Using GPU: {torch.cuda.get_device_name(0)}")
         print(f"  GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
     else:
         device = torch.device("cpu")

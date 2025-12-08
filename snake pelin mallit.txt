@@ -1,6 +1,0 @@
-snake pelin mallit
-
-1. reinforcement learning, 16 inputs
-2. rl, cnn, whole grid as input, 100 inputs
-3. -, previous frame added to inputs, 200 inputs
-4. changed to genetic learning

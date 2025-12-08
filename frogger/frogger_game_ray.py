@@ -220,7 +220,7 @@ class FroggerGameRL:
                         vehicle["length"] = self.truck_length_sub
                     else:
                         vehicle["type"] = "car"
-                        vehicle["length"] = self.car_length_sub 
+                        vehicle["length"] = self.car_length_sub
 
                 new_vehicles.append({
                     "base": new_base,
@@ -543,7 +543,7 @@ class FroggerGameRL:
 
                 # Yellow stripe indicating direction of movement (full height of the vehicle)
                 if lane_dir == 1:
-                    # moving right → stripe on the right edge
+                    # moving right - stripe on the right edge
                     stripe_rect = pygame.Rect(
                         car_rect.right - stripe_width,
                         car_rect.top,
@@ -551,7 +551,7 @@ class FroggerGameRL:
                         car_rect.height
                     )
                 else:
-                    # moving left → stripe on the left edge
+                    # moving left - stripe on the left edge
                     stripe_rect = pygame.Rect(
                         car_rect.left,
                         car_rect.top,

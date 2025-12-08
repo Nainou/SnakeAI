@@ -4,10 +4,13 @@ import torch
 import numpy as np
 import re
 import threading
+import pickle
+import json
+from collections import deque
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Tuple
+from datetime import datetime
 
-# All imports are local to demo folder - self-contained
 from snake_game_single import SnakeGameSingle, Direction
 from snake_game_pvp import SnakeGamePvP
 from neural_network import NeuralNetwork, ConvQN
@@ -20,12 +23,12 @@ class ModelMetadata:
 
     def __init__(self, model_type: str, input_size: int, hidden_size: int,
                  output_size: int, extra_info: str = "", hidden_size2: Optional[int] = None):
-        self.model_type = model_type  # e.g., 'pvp', 'ray', 'lstm', 'pixel', 'genetic'
+        self.model_type = model_type  # ray,pixel,genetic,pvp
         self.input_size = input_size
-        self.hidden_size = hidden_size  # First hidden layer size
-        self.hidden_size2 = hidden_size2  # Second hidden layer size (for genetic models)
+        self.hidden_size = hidden_size
+        self.hidden_size2 = hidden_size2  # genetic models only
         self.output_size = output_size
-        self.extra_info = extra_info  # e.g., 'gen30', 'final', etc.
+        self.extra_info = extra_info  # genetic models only
 
     def to_filename(self, prefix: str = "") -> str:
         if self.hidden_size2 is not None:
@@ -64,13 +67,12 @@ def parse_model_filename(filename: str) -> Optional[ModelMetadata]:
     if match:
         model_type = "genetic"
         input_size = int(match.group(1))
-        hidden_size = int(match.group(2))  # hidden_size1
-        hidden_size2 = int(match.group(3))  # hidden_size2
+        hidden_size = int(match.group(2))
+        hidden_size2 = int(match.group(3))
         output_size = int(match.group(4))
         extra_info = match.group(5) or ""
         return ModelMetadata(model_type, input_size, hidden_size, output_size, extra_info, hidden_size2)
 
-    # Pattern: type_input_hidden_output_optional_extra (standard format)
     pattern = r'^([a-z]+)_(\d+)_(\d+)_(\d+)(?:_(.+))?$'
     match = re.match(pattern, name)
 
@@ -83,28 +85,15 @@ def parse_model_filename(filename: str) -> Optional[ModelMetadata]:
 
         return ModelMetadata(model_type, input_size, hidden_size, output_size, extra_info)
 
-    # Try to parse legacy filenames (e.g., pvp_snake_gen_30.pth)
     legacy_pattern = r'^([a-z_]+)_gen_(\d+)$'
     match = re.match(legacy_pattern, name)
     if match:
-        # Default to PvP architecture
         model_type = "pvp"
         input_size = 17
         hidden_size = 64
         output_size = 3
         extra_info = f"gen{match.group(2)}"
         return ModelMetadata(model_type, input_size, hidden_size, output_size, extra_info)
-
-    # Try final pattern
-    if "final" in name.lower():
-        # Default to PvP architecture
-        model_type = "pvp"
-        input_size = 17
-        hidden_size = 64
-        output_size = 3
-        extra_info = "final"
-        return ModelMetadata(model_type, input_size, hidden_size, output_size, extra_info)
-
     return None
 
 
@@ -126,7 +115,6 @@ def list_models_in_directory(directory: Path) -> Dict[str, ModelMetadata]:
         if metadata:
             models[file_path.name] = metadata
         else:
-            # Store with None metadata for files that don't match pattern
             models[file_path.name] = None
 
     return models
@@ -152,10 +140,6 @@ def format_model_info(metadata: Optional[ModelMetadata], filename: str) -> str:
         return f"Unknown format: {filename}"
 
 
-# ============================================================================
-# Demo Functions
-# ============================================================================
-
 
 def infer_architecture_from_model(model_path: Path, device: torch.device):
     try:
@@ -164,7 +148,6 @@ def infer_architecture_from_model(model_path: Path, device: torch.device):
         # Handle different checkpoint formats
         if isinstance(checkpoint, dict) and 'q_network_state_dict' in checkpoint:
             state_dict = checkpoint['q_network_state_dict']
-            # Check if it's a pixel model (has convLayers) or ray model (has fc1)
             if 'convLayers.0.weight' in state_dict:
                 model_type = "pixel"
             else:
@@ -181,8 +164,6 @@ def infer_architecture_from_model(model_path: Path, device: torch.device):
 
         # Check for pixel model structure (ConvQN)
         if 'convLayers.0.weight' in state_dict:
-            # Pixel model: ConvQN architecture
-            # Extract dimensions from state dict
             # head[0] is the first linear layer: (feat_dim + extra_dim) -> hidden
             if 'head.0.weight' in state_dict:
                 head_input_size = state_dict['head.0.weight'].shape[1]  # feat_dim + extra_dim
@@ -199,15 +180,14 @@ def infer_architecture_from_model(model_path: Path, device: torch.device):
             input_size = state_dict['fc1.weight'].shape[1]
             hidden_size = state_dict['fc1.weight'].shape[0]
 
-            # Check if it's a genetic model (has fc1, fc2, fc3 but no fc4)
             if 'fc3.weight' in state_dict and 'fc4.weight' not in state_dict:
-                # Genetic model: (input_size, hidden_size1, hidden_size2, output_size)
+                # genetic model uses 3 layers
                 hidden_size2 = state_dict['fc2.weight'].shape[0]
                 output_size = state_dict['fc3.weight'].shape[0]
                 model_type = "genetic"
                 return ModelMetadata(model_type, input_size, hidden_size, output_size, "", hidden_size2)
             elif 'fc4.weight' in state_dict:
-                # Standard 4-layer model (Ray/PvP)
+                # ray, pixel and pvp models use 4 layers
                 output_size = state_dict['fc4.weight'].shape[0]
                 return ModelMetadata(model_type, input_size, hidden_size, output_size, "")
             else:
@@ -220,23 +200,21 @@ def infer_architecture_from_model(model_path: Path, device: torch.device):
 
 
 def load_model_with_metadata(model_path: Path, metadata: Optional[ModelMetadata], device: torch.device):
-    # If no metadata, try to infer from model file
     if metadata is None:
         print(f"  No metadata found, attempting to infer architecture...")
         metadata = infer_architecture_from_model(model_path, device)
         if metadata:
             if metadata.hidden_size2 is not None:
-                print(f"  ✓ Inferred architecture: {metadata.input_size}→{metadata.hidden_size}→{metadata.hidden_size2}→{metadata.output_size}")
+                print(f"  Inferred architecture: {metadata.input_size}->{metadata.hidden_size}->{metadata.hidden_size2}->{metadata.output_size}")
             else:
-                print(f"  ✓ Inferred architecture: {metadata.input_size}→{metadata.hidden_size}→{metadata.output_size}")
+                print(f"  Inferred architecture: {metadata.input_size}->{metadata.hidden_size}->{metadata.output_size}")
         else:
-            print(f"  ⚠ Could not infer architecture, using defaults (17→64→3)")
+            print(f"  Could not infer architecture, using defaults (17->64->3)")
             metadata = ModelMetadata("pvp", 17, 64, 3, "")
 
-    # Create the appropriate network architecture based on model type
+# pixel model uses ConvQN architecture
+# ray, pixel and pvp models use NeuralNetwork architecture
     if metadata.model_type == "pixel":
-        # Pixel model uses ConvQN architecture
-        # Default parameters for pixel model: in_channels=5, extra_dim=8, feat_dim=64, hidden=128
         network = ConvQN(
             in_channels=5,
             extra_dim=8,
@@ -246,8 +224,6 @@ def load_model_with_metadata(model_path: Path, metadata: Optional[ModelMetadata]
             device=device
         )
     else:
-        # Ray, PvP, and Genetic models use NeuralNetwork
-        # Pass hidden_size2 for genetic models
         network = NeuralNetwork(
             input_size=metadata.input_size,
             hidden_size=metadata.hidden_size,
@@ -282,11 +258,11 @@ def load_model_with_metadata(model_path: Path, metadata: Optional[ModelMetadata]
 
         network.load_state_dict(state_dict)
         if metadata.hidden_size2 is not None:
-            print(f"✓ Loaded {metadata.model_type} model: {metadata.input_size}→{metadata.hidden_size}→{metadata.hidden_size2}→{metadata.output_size}")
+            print(f"Loaded {metadata.model_type} model: {metadata.input_size}->{metadata.hidden_size}->{metadata.hidden_size2}->{metadata.output_size}")
         else:
-            print(f"✓ Loaded {metadata.model_type} model: {metadata.input_size}→{metadata.hidden_size}→{metadata.output_size}")
+            print(f"Loaded {metadata.model_type} model: {metadata.input_size}->{metadata.hidden_size}->{metadata.output_size}")
     except Exception as e:
-        print(f"⚠ Warning: Could not load model weights: {e}")
+        print(f" Warning: Could not load model weights: {e}")
         print("  Using randomly initialized network")
         import traceback
         traceback.print_exc()
@@ -348,7 +324,7 @@ def demo_single_model(model_path: Path, metadata: ModelMetadata,
 
     # Outer loop for restarting games when "try to win" is enabled
     attempt = 0
-    max_attempts = 100 if try_to_win and record_video else 1
+    max_attempts = 1000 if try_to_win and record_video else 1
 
     while attempt < max_attempts:
         # Reset game for new attempt
@@ -427,6 +403,30 @@ def demo_single_model(model_path: Path, metadata: ModelMetadata,
                     print(f"\nGame finished!")
                     print(f"Final score: {game.score}")
                     print(f"Steps: {step}")
+                    print(f"Snake length: {len(game.snake_positions)}")
+                    if game.won:
+                        print(f"Result: Snake won! (filled the entire grid)")
+                    else:
+                        # Get death reason from info dict or game object
+                        death_reason = info.get('death_reason') if isinstance(info, dict) else None
+                        if not death_reason and hasattr(game, 'death_reason'):
+                            death_reason = game.death_reason
+
+                        if death_reason:
+                            print(f"Death reason: {death_reason}")
+                        else:
+                            print(f"Death reason: Unknown")
+
+                        # Get death position from info dict
+                        death_position = info.get('death_position') if isinstance(info, dict) else None
+                        if death_position:
+                            print(f"Death position: ({death_position[0]}, {death_position[1]})")
+                        elif hasattr(game, 'snake_positions') and game.snake_positions:
+                            head = game.snake_positions[0]
+                            print(f"Head position at death: ({head[0]}, {head[1]})")
+
+                        if hasattr(game, 'direction'):
+                            print(f"Direction at death: {game.direction.name}")
                     game_finished = True
 
                     # Save video if conditions are met
@@ -460,7 +460,7 @@ def demo_single_model(model_path: Path, metadata: ModelMetadata,
 
                             print(f"\nSaving video to {video_path}...")
                             imageio.mimsave(str(video_path), video_frames, fps=10)
-                            print(f"✓ Video saved successfully! ({len(video_frames)} frames)")
+                            print(f"Video saved successfully! ({len(video_frames)} frames)")
                             if game.won:
                                 print(f"  Snake won with score: {game.score}")
                             else:
@@ -533,10 +533,288 @@ def demo_single_model(model_path: Path, metadata: ModelMetadata,
 
     # If we exhausted attempts
     if try_to_win and record_video and attempt >= max_attempts and not game.won:
-        print(f"\n⚠ Reached maximum attempts ({max_attempts}). No winning game found.")
+        print(f"\nReached maximum attempts ({max_attempts}). No winning game found.")
         if not keep_open:
             game.close()
             return
+
+
+def simulate_and_save_win(model_path: Path, metadata: ModelMetadata,
+                         grid_size: int = 10, max_games: int = 1000,
+                         state_size: int = None, use_pixel_state: bool = False,
+                         output_dir: Path = None):
+    #Simulate games without rendering and save the first winning game.
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    print(f"\n{'='*60}")
+    print(f"Simulating games to find a win: {model_path.name}")
+    print(f"Architecture: {format_model_info(metadata, model_path.name)}")
+    print(f"Max games: {max_games}")
+    print(f"{'='*60}\n")
+
+    # Load the model
+    network = load_model_with_metadata(model_path, metadata, device)
+
+    # Determine state size
+    if state_size is None:
+        state_size = metadata.input_size if metadata else 17
+
+    # Check if this is a pixel model
+    is_pixel_model = metadata.model_type == "pixel" if metadata else False
+    if use_pixel_state is None:
+        use_pixel_state = is_pixel_model
+
+    # Check if this is a genetic model (4 actions instead of 3)
+    is_genetic_model = metadata.model_type == "genetic" and metadata.output_size == 4
+
+    # Create game without display
+    game = SnakeGameSingle(grid_size=grid_size, display=False, render_delay=0,
+                          state_size=state_size, use_pixel_state=use_pixel_state,
+                          show_ray_lines=False)
+    game.set_network(network)
+
+    # Setup output directory
+    if output_dir is None:
+        output_dir = Path(__file__).parent / "replays"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Simulate games
+    highest_score = 0
+    for game_num in range(1, max_games + 1):
+        # Reset game
+        state = game.reset()
+
+        # Record initial state
+        initial_state = {
+            'snake_positions': list(game.snake_positions),
+            'direction': game.direction.name,
+            'food_position': game.food_position,
+            'grid_size': grid_size,
+            'score': 0,
+            'steps': 0
+        }
+
+        # Record game actions and states
+        actions = []
+        states_history = []
+        food_positions = []  # Track food positions at each step to ensure deterministic replay
+
+        # Play game
+        step = 0
+        while not game.done:
+            # Save current food position before step
+            food_positions.append(game.food_position)
+
+            # Get action from neural network
+            action = network.act(state, return_activations=False)
+
+            # Store original action
+            original_action = action
+
+            # Convert genetic model actions if needed
+            if is_genetic_model:
+                directions = [Direction.UP, Direction.RIGHT, Direction.DOWN, Direction.LEFT]
+                target_direction = directions[action]
+                current_direction = game.direction
+
+                if target_direction == current_direction:
+                    action = 0  # Straight
+                else:
+                    current_idx = Direction.get_index(current_direction)
+                    target_idx = Direction.get_index(target_direction)
+                    if (target_idx - current_idx) % 4 == 1:
+                        action = 1  # Right turn
+                    elif (target_idx - current_idx) % 4 == 3:
+                        action = 2  # Left turn
+                    else:
+                        action = 1  # 180 degree turn, treat as right
+
+            # Store action (save original for genetic models)
+            actions.append(original_action if is_genetic_model else action)
+
+            # Store state snapshot (for pixel models, store simplified state)
+            if use_pixel_state:
+                # For pixel models, store the game state in a simpler format
+                states_history.append({
+                    'snake_positions': list(game.snake_positions),
+                    'direction': game.direction.name,
+                    'food_position': game.food_position,
+                    'score': game.score
+                })
+            else:
+                # For regular models, store the state vector
+                if isinstance(state, np.ndarray):
+                    states_history.append(state.tolist())
+                else:
+                    states_history.append(None)
+
+            state, reward, done, info = game.step(action)
+            step += 1
+
+
+        # Track highest score
+        if game.score > highest_score:
+            highest_score = game.score
+
+        # Display progress every 100 games
+        if game_num % 20 == 0:
+            print(f"Simulated {game_num} games... Highest score: {highest_score}")
+
+        # Check if won
+        if game.won:
+            print(f"\nFound winning game after {game_num} simulations!")
+            print(f"  Score: {game.score}")
+            print(f"  Steps: {step}")
+            print(f"  Snake length: {len(game.snake_positions)}")
+
+            # Create replay data
+            replay_data = {
+                'initial_state': initial_state,
+                'actions': actions,
+                'food_positions': food_positions,  # Save food position sequence for deterministic replay
+                'states_history': states_history,
+                'final_score': game.score,
+                'final_steps': step,
+                'won': True,
+                'model_name': model_path.name,
+                'model_metadata': {
+                    'model_type': metadata.model_type,
+                    'input_size': metadata.input_size,
+                    'hidden_size': metadata.hidden_size,
+                    'output_size': metadata.output_size,
+                    'hidden_size2': getattr(metadata, 'hidden_size2', None)
+                },
+                'grid_size': grid_size,
+                'is_genetic_model': is_genetic_model,
+                'use_pixel_state': use_pixel_state,
+                'timestamp': datetime.now().isoformat()
+            }
+
+            # Save replay
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            model_name = model_path.stem
+            replay_filename = f"replay_win_{model_name}_{timestamp}.pkl"
+            replay_path = output_dir / replay_filename
+
+            with open(replay_path, 'wb') as f:
+                pickle.dump(replay_data, f)
+
+            print(f"Replay saved to: {replay_path}")
+            return replay_path
+
+    print(f"\nNo winning game found after {max_games} simulations.")
+    return None
+
+
+def replay_game(replay_path: Path, render_delay: int = 10, show_ray_lines: bool = True):
+    #Replay a saved game with rendering.
+
+    print(f"\n{'='*60}")
+    print(f"Replaying game: {replay_path.name}")
+    print(f"{'='*60}\n")
+
+    # Load replay data
+    with open(replay_path, 'rb') as f:
+        replay_data = pickle.load(f)
+
+    grid_size = replay_data['grid_size']
+    initial_state = replay_data['initial_state']
+    actions = replay_data['actions']
+    food_positions = replay_data.get('food_positions', [])  # Get saved food positions
+    is_genetic_model = replay_data.get('is_genetic_model', False)
+    use_pixel_state = replay_data.get('use_pixel_state', False)
+
+    # Determine state size from metadata
+    metadata = replay_data.get('model_metadata', {})
+    state_size = metadata.get('input_size', 17)
+
+    # Create game with display
+    game = SnakeGameSingle(grid_size=grid_size, display=True, render_delay=render_delay,
+                          state_size=state_size, use_pixel_state=use_pixel_state,
+                          show_ray_lines=show_ray_lines)
+
+    # Restore initial state
+    game.snake_positions = deque(initial_state['snake_positions'])
+    game.direction = Direction[initial_state['direction']]
+    game.food_position = initial_state['food_position']
+    game.score = initial_state['score']
+    game.steps = initial_state['steps']
+    game.alive = True
+    game.done = False
+    game.won = False
+    game.last_food_step = 0
+    game.distance_to_food = abs(game.snake_positions[0][0] - game.food_position[0]) + abs(game.snake_positions[0][1] - game.food_position[1]) if game.food_position else 0
+
+    print(f"Replaying {len(actions)} actions...")
+    print(f"Final score: {replay_data['final_score']}")
+    print(f"Final steps: {replay_data['final_steps']}")
+    print("Close the game window to exit.\n")
+
+    import pygame
+
+    # Replay actions
+    action_idx = 0
+    while action_idx < len(actions) and not game.done:
+        # Handle pygame events
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                game.close()
+                return
+
+        # Set food position from saved sequence before step (ensures deterministic replay)
+        if action_idx < len(food_positions):
+            game.food_position = food_positions[action_idx]
+
+        # Get action
+        original_action = actions[action_idx]
+
+        # Convert genetic model actions if needed
+        if is_genetic_model:
+            directions = [Direction.UP, Direction.RIGHT, Direction.DOWN, Direction.LEFT]
+            target_direction = directions[original_action]
+            current_direction = game.direction
+
+            if target_direction == current_direction:
+                action = 0  # Straight
+            else:
+                current_idx = Direction.get_index(current_direction)
+                target_idx = Direction.get_index(target_direction)
+                if (target_idx - current_idx) % 4 == 1:
+                    action = 1  # Right turn
+                elif (target_idx - current_idx) % 4 == 3:
+                    action = 2  # Left turn
+                else:
+                    action = 1  # 180 degree turn
+        else:
+            action = original_action
+
+        # Step the game
+        state, reward, done, info = game.step(action)
+
+        # After step, override the food position with the next saved position
+        # This ensures deterministic replay by overriding random food placement
+        if action_idx + 1 < len(food_positions):
+            game.food_position = food_positions[action_idx + 1]
+            # Update distance to food
+            if game.food_position:
+                game.distance_to_food = abs(game.snake_positions[0][0] - game.food_position[0]) + abs(game.snake_positions[0][1] - game.food_position[1])
+            else:
+                game.distance_to_food = 0
+
+        action_idx += 1
+
+        # Render
+        game.render()
+
+    # Keep window open after replay finishes
+    print("\nReplay finished! Close the window to exit.")
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                game.close()
+                return
+        game.render()
 
 
 def demo_pvp_models(model_paths: list, metadata_list: list,
@@ -651,12 +929,12 @@ def migrate_model(source_path: Path, target_dir: Path, extra_info: str = ""):
     # Check if already in correct format
     existing_meta = parse_model_filename(source_path.name)
     if existing_meta:
-        print(f"  ✓ Already in correct format")
+        print(f"  Already in correct format")
         if target_dir != source_path.parent:
             target_path = target_dir / source_path.name
             import shutil
             shutil.copy2(source_path, target_path)
-            print(f"  ✓ Copied to: {target_path}")
+            print(f"  Copied to: {target_path}")
         return
 
     # Extract architecture
@@ -665,10 +943,10 @@ def migrate_model(source_path: Path, target_dir: Path, extra_info: str = ""):
     arch = infer_architecture_from_model(source_path, device)
 
     if not arch:
-        print(f"  ⚠ Could not determine architecture, using defaults (pvp_17_64_3)")
+        print(f"  Could not determine architecture, using defaults (pvp_17_64_3)")
         arch = ModelMetadata("pvp", 17, 64, 3, "")
 
-    print(f"  Architecture: {arch.input_size}→{arch.hidden_size}→{arch.output_size}")
+    print(f"  Architecture: {arch.input_size}->{arch.hidden_size}->{arch.output_size}")
 
     # Extract extra info from filename if not provided
     if not extra_info:
@@ -704,7 +982,7 @@ def migrate_model(source_path: Path, target_dir: Path, extra_info: str = ""):
 
     import shutil
     shutil.copy2(source_path, target_path)
-    print(f"  ✓ Migrated to: {target_path.name}")
+    print(f"  Migrated to: {target_path.name}")
 
 
 class DemoGUI:
@@ -715,11 +993,15 @@ class DemoGUI:
 
         self.root = tk.Tk()
         self.root.title("Snake AI Model Demo")
-        self.root.geometry("600x700")
+        self.root.geometry("650x750")
 
         # Models directory
         self.models_dir = Path(__file__).parent / "models"
         self.models_dir.mkdir(parents=True, exist_ok=True)
+
+        # Replays directory
+        self.replays_dir = Path(__file__).parent / "replays"
+        self.replays_dir.mkdir(parents=True, exist_ok=True)
 
         # Model data
         self.model_list = []
@@ -735,8 +1017,31 @@ class DemoGUI:
                                font=("Arial", 16, "bold"))
         title_label.pack(pady=10)
 
+        # Create notebook for tabs
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # Create Single Model tab
+        self.single_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.single_tab, text="Single Model")
+        self.create_single_tab()
+
+        # Create PvP tab
+        self.pvp_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.pvp_tab, text="PvP")
+        self.create_pvp_tab()
+
+        # Status/Log section (shared across tabs)
+        log_frame = ttk.LabelFrame(self.root, text="Status", padding=5)
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=8, wrap=tk.WORD)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+        self.log("Ready. Select models and click Start to begin.")
+
+    def create_single_tab(self):
         # Models section
-        models_frame = ttk.LabelFrame(self.root, text="Available Models", padding=10)
+        models_frame = ttk.LabelFrame(self.single_tab, text="Available Models", padding=10)
         models_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
         # Refresh button
@@ -744,15 +1049,106 @@ class DemoGUI:
                                command=self.scan_models)
         refresh_btn.pack(anchor=tk.W, pady=5)
 
-        # Single model dropdown (for single model demo)
+        # Single model dropdown
         single_frame = tk.Frame(models_frame)
         single_frame.pack(fill=tk.X, pady=5)
-        tk.Label(single_frame, text="Single Model:").pack(side=tk.LEFT, padx=5)
+        tk.Label(single_frame, text="Select Model:").pack(side=tk.LEFT, padx=5)
         self.single_model_var = tk.StringVar()
         self.single_model_combo = ttk.Combobox(single_frame, textvariable=self.single_model_var,
                                                 state="readonly", width=50)
         self.single_model_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         self.single_model_combo.bind('<<ComboboxSelected>>', self.on_single_model_select)
+
+        # Model info label
+        self.single_model_info_label = tk.Label(models_frame, text="Select a model to see details",
+                                         wraplength=550, justify=tk.LEFT)
+        self.single_model_info_label.pack(fill=tk.X, pady=5)
+
+        # Settings section
+        settings_frame = ttk.LabelFrame(self.single_tab, text="Game Settings", padding=10)
+        settings_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        # Grid size
+        grid_frame = tk.Frame(settings_frame)
+        grid_frame.pack(fill=tk.X, pady=2)
+        tk.Label(grid_frame, text="Grid Size:").pack(side=tk.LEFT)
+        self.single_grid_size_var = tk.StringVar(value="10")
+        grid_spinbox = tk.Spinbox(grid_frame, from_=10, to=30, textvariable=self.single_grid_size_var, width=10)
+        grid_spinbox.pack(side=tk.LEFT, padx=5)
+
+        # Render delay/FPS
+        fps_frame = tk.Frame(settings_frame)
+        fps_frame.pack(fill=tk.X, pady=2)
+        tk.Label(fps_frame, text="FPS (0=max speed):").pack(side=tk.LEFT)
+        self.single_fps_var = tk.StringVar(value="10")
+        fps_spinbox = tk.Spinbox(fps_frame, from_=0, to=60, textvariable=self.single_fps_var, width=10)
+        fps_spinbox.pack(side=tk.LEFT, padx=5)
+
+        # Show ray lines option (for ray models)
+        ray_frame = tk.Frame(settings_frame)
+        ray_frame.pack(fill=tk.X, pady=2)
+        self.single_show_ray_lines_var = tk.BooleanVar(value=False)
+        ray_checkbox = tk.Checkbutton(ray_frame, text="Show Ray Lines (for ray models)",
+                                      variable=self.single_show_ray_lines_var)
+        ray_checkbox.pack(side=tk.LEFT)
+
+        # Record video option
+        video_frame = tk.Frame(settings_frame)
+        video_frame.pack(fill=tk.X, pady=2)
+        self.single_record_video_var = tk.BooleanVar(value=False)
+        video_checkbox = tk.Checkbutton(video_frame, text="Record Video",
+                                       variable=self.single_record_video_var,
+                                       command=self.update_video_options)
+        video_checkbox.pack(side=tk.LEFT, padx=5)
+
+        # Try to win option (only enabled when recording)
+        self.single_try_to_win_var = tk.BooleanVar(value=True)
+        self.single_try_to_win_checkbox = tk.Checkbutton(video_frame, text="Try to Win (only save if snake wins)",
+                                                  variable=self.single_try_to_win_var,
+                                                  state=tk.DISABLED)
+        self.single_try_to_win_checkbox.pack(side=tk.LEFT, padx=5)
+
+        # Simulation mode option
+        sim_frame = tk.Frame(settings_frame)
+        sim_frame.pack(fill=tk.X, pady=2)
+        self.single_simulate_mode_var = tk.BooleanVar(value=False)
+        sim_checkbox = tk.Checkbutton(sim_frame, text="Simulation Mode",
+                                     variable=self.single_simulate_mode_var,
+                                     command=self.update_simulation_options)
+        sim_checkbox.pack(side=tk.LEFT, padx=5)
+
+        # Max games for simulation
+        self.single_max_games_var = tk.StringVar(value="1000")
+        self.single_max_games_label = tk.Label(sim_frame, text="Max games:", state=tk.DISABLED)
+        self.single_max_games_label.pack(side=tk.LEFT, padx=5)
+        self.single_max_games_spinbox = tk.Spinbox(sim_frame, from_=1, to=10000, textvariable=self.single_max_games_var,
+                                            width=10, state=tk.DISABLED)
+        self.single_max_games_spinbox.pack(side=tk.LEFT, padx=5)
+
+        # Buttons section
+        buttons_frame = tk.Frame(self.single_tab)
+        buttons_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        self.start_single_btn = tk.Button(buttons_frame, text="Start Single Model Demo",
+                                         command=self.start_single_demo,
+                                         bg="#4CAF50", fg="white", font=("Arial", 10, "bold"),
+                                         state=tk.DISABLED)
+        self.start_single_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+        self.replay_btn = tk.Button(buttons_frame, text="Replay Saved Game",
+                                    command=self.replay_saved_game,
+                                    bg="#FF9800", fg="white", font=("Arial", 10, "bold"))
+        self.replay_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+    def create_pvp_tab(self):
+        # Models section
+        models_frame = ttk.LabelFrame(self.pvp_tab, text="Available Models", padding=10)
+        models_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # Refresh button
+        refresh_btn = tk.Button(models_frame, text="Refresh Models",
+                               command=self.scan_models)
+        refresh_btn.pack(anchor=tk.W, pady=5)
 
         # PvP models dropdowns (for multi-select, up to 4 snakes)
         pvp_frame = tk.Frame(models_frame)
@@ -774,77 +1170,39 @@ class DemoGUI:
             self.pvp_model_combos.append(pvp_combo)
 
         # Model info label
-        self.model_info_label = tk.Label(models_frame, text="Select a model to see details",
+        self.pvp_model_info_label = tk.Label(models_frame, text="Select models to see details",
                                          wraplength=550, justify=tk.LEFT)
-        self.model_info_label.pack(fill=tk.X, pady=5)
+        self.pvp_model_info_label.pack(fill=tk.X, pady=5)
 
         # Settings section
-        settings_frame = ttk.LabelFrame(self.root, text="Game Settings", padding=10)
+        settings_frame = ttk.LabelFrame(self.pvp_tab, text="Game Settings", padding=10)
         settings_frame.pack(fill=tk.X, padx=10, pady=5)
 
         # Grid size
         grid_frame = tk.Frame(settings_frame)
         grid_frame.pack(fill=tk.X, pady=2)
         tk.Label(grid_frame, text="Grid Size:").pack(side=tk.LEFT)
-        self.grid_size_var = tk.StringVar(value="10")
-        grid_spinbox = tk.Spinbox(grid_frame, from_=10, to=30, textvariable=self.grid_size_var, width=10)
+        self.pvp_grid_size_var = tk.StringVar(value="20")
+        grid_spinbox = tk.Spinbox(grid_frame, from_=10, to=30, textvariable=self.pvp_grid_size_var, width=10)
         grid_spinbox.pack(side=tk.LEFT, padx=5)
 
         # Render delay/FPS
         fps_frame = tk.Frame(settings_frame)
         fps_frame.pack(fill=tk.X, pady=2)
         tk.Label(fps_frame, text="FPS (0=max speed):").pack(side=tk.LEFT)
-        self.fps_var = tk.StringVar(value="10")
-        fps_spinbox = tk.Spinbox(fps_frame, from_=0, to=60, textvariable=self.fps_var, width=10)
+        self.pvp_fps_var = tk.StringVar(value="10")
+        fps_spinbox = tk.Spinbox(fps_frame, from_=0, to=60, textvariable=self.pvp_fps_var, width=10)
         fps_spinbox.pack(side=tk.LEFT, padx=5)
 
-        # Show ray lines option (for ray models)
-        ray_frame = tk.Frame(settings_frame)
-        ray_frame.pack(fill=tk.X, pady=2)
-        self.show_ray_lines_var = tk.BooleanVar(value=True)
-        ray_checkbox = tk.Checkbutton(ray_frame, text="Show Ray Lines (for ray models)",
-                                      variable=self.show_ray_lines_var)
-        ray_checkbox.pack(side=tk.LEFT)
-
-        # Record video option
-        video_frame = tk.Frame(settings_frame)
-        video_frame.pack(fill=tk.X, pady=2)
-        self.record_video_var = tk.BooleanVar(value=False)
-        video_checkbox = tk.Checkbutton(video_frame, text="Record Video",
-                                       variable=self.record_video_var,
-                                       command=self.update_video_options)
-        video_checkbox.pack(side=tk.LEFT, padx=5)
-
-        # Try to win option (only enabled when recording)
-        self.try_to_win_var = tk.BooleanVar(value=True)
-        self.try_to_win_checkbox = tk.Checkbutton(video_frame, text="Try to Win (only save if snake wins)",
-                                                  variable=self.try_to_win_var,
-                                                  state=tk.DISABLED)
-        self.try_to_win_checkbox.pack(side=tk.LEFT, padx=5)
-
         # Buttons section
-        buttons_frame = tk.Frame(self.root)
+        buttons_frame = tk.Frame(self.pvp_tab)
         buttons_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        self.start_single_btn = tk.Button(buttons_frame, text="Start Single Model Demo",
-                                         command=self.start_single_demo,
-                                         bg="#4CAF50", fg="white", font=("Arial", 10, "bold"),
-                                         state=tk.DISABLED)
-        self.start_single_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
         self.start_pvp_btn = tk.Button(buttons_frame, text="Start PvP Demo",
                                        command=self.start_pvp_demo,
                                        bg="#2196F3", fg="white", font=("Arial", 10, "bold"),
                                        state=tk.DISABLED)
-        self.start_pvp_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-
-        # Status/Log section
-        log_frame = ttk.LabelFrame(self.root, text="Status", padding=5)
-        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=8, wrap=tk.WORD)
-        self.log_text.pack(fill=tk.BOTH, expand=True)
-        self.log("Ready. Select models and click Start to begin.")
+        self.start_pvp_btn.pack(fill=tk.X, expand=True)
 
     def log(self, message):
         self.log_text.insert(tk.END, message + "\n")
@@ -853,11 +1211,21 @@ class DemoGUI:
 
     def update_video_options(self):
         # Enable/disable "Try to Win" checkbox based on "Record Video" state
-        if hasattr(self, 'try_to_win_checkbox'):
-            if self.record_video_var.get():
-                self.try_to_win_checkbox.config(state=tk.NORMAL)
+        if hasattr(self, 'single_try_to_win_checkbox'):
+            if self.single_record_video_var.get():
+                self.single_try_to_win_checkbox.config(state=tk.NORMAL)
             else:
-                self.try_to_win_checkbox.config(state=tk.DISABLED)
+                self.single_try_to_win_checkbox.config(state=tk.DISABLED)
+
+    def update_simulation_options(self):
+        # Enable/disable simulation options based on "Simulation Mode" state
+        if hasattr(self, 'single_max_games_label') and hasattr(self, 'single_max_games_spinbox'):
+            if self.single_simulate_mode_var.get():
+                self.single_max_games_label.config(state=tk.NORMAL)
+                self.single_max_games_spinbox.config(state=tk.NORMAL)
+            else:
+                self.single_max_games_label.config(state=tk.DISABLED)
+                self.single_max_games_spinbox.config(state=tk.DISABLED)
 
     def scan_models(self):
         self.log("Scanning models directory...")
@@ -866,13 +1234,13 @@ class DemoGUI:
         self.model_paths = []
 
         if not self.models_dir.exists():
-            self.log(f"⚠ Models directory not found: {self.models_dir}")
+            self.log(f"Models directory not found: {self.models_dir}")
             return
 
         models = list_models_in_directory(self.models_dir)
 
         if not models:
-            self.log(f"⚠ No model files found in: {self.models_dir}")
+            self.log(f"No model files found in: {self.models_dir}")
             return
 
         model_items = list(models.items())
@@ -881,9 +1249,9 @@ class DemoGUI:
             display_name = filename
             if metadata:
                 if metadata.hidden_size2 is not None:
-                    display_name += f" ({metadata.model_type.upper()}, {metadata.input_size}→{metadata.hidden_size}→{metadata.hidden_size2}→{metadata.output_size})"
+                    display_name += f" ({metadata.model_type.upper()}, {metadata.input_size}->{metadata.hidden_size}->{metadata.hidden_size2}->{metadata.output_size})"
                 else:
-                    display_name += f" ({metadata.model_type.upper()}, {metadata.input_size}→{metadata.hidden_size}→{metadata.output_size})"
+                    display_name += f" ({metadata.model_type.upper()}, {metadata.input_size}->{metadata.hidden_size}->{metadata.output_size})"
             else:
                 display_name += " (Unknown format)"
 
@@ -913,7 +1281,7 @@ class DemoGUI:
                     info = format_model_info(metadata, filename)
                 else:
                     info = f"Unknown format: {filename} (will attempt to infer architecture)"
-                self.model_info_label.config(text=info)
+                self.single_model_info_label.config(text=info)
             except (ValueError, IndexError):
                 pass
         self.update_button_states()
@@ -929,7 +1297,7 @@ class DemoGUI:
                     info = format_model_info(metadata, filename)
                 else:
                     info = f"Unknown format: {filename} (will attempt to infer architecture)"
-                self.model_info_label.config(text=info)
+                self.pvp_model_info_label.config(text=info)
             except (ValueError, IndexError):
                 pass
         self.update_button_states()
@@ -960,8 +1328,8 @@ class DemoGUI:
 
         # Get settings
         try:
-            grid_size = int(self.grid_size_var.get())
-            fps = int(self.fps_var.get())
+            grid_size = int(self.single_grid_size_var.get())
+            fps = int(self.single_fps_var.get())
             render_delay = fps if fps > 0 else 0
         except ValueError:
             messagebox.showerror("Invalid Settings", "Please enter valid numbers for settings.")
@@ -974,37 +1342,58 @@ class DemoGUI:
             inferred_metadata = infer_architecture_from_model(model_path, device)
             if inferred_metadata:
                 metadata = inferred_metadata
-                self.log(f"✓ Inferred: {format_model_info(metadata, filename)}")
+                self.log(f"Inferred: {format_model_info(metadata, filename)}")
             else:
-                self.log(f"⚠ Could not infer architecture, using defaults")
+                self.log(f"Could not infer architecture, using defaults")
                 metadata = ModelMetadata("pvp", 17, 64, 3, "")
 
         self.log(f"Starting single model demo: {filename}")
-        self.log("Game window will open. Close it when done.")
-        print(f"DEBUG: Starting single model demo with {filename}, num_snakes=1")
+        self.log("Game window opened.")
+        print(f"Starting single model demo with {filename}, num_snakes=1")
 
         # Get show ray lines option
-        show_ray_lines = self.show_ray_lines_var.get()
+        show_ray_lines = self.single_show_ray_lines_var.get()
 
         # Get record video option
-        record_video = getattr(self, 'record_video_var', None)
-        if record_video is None:
-            record_video = False
-        else:
-            record_video = record_video.get()
+        record_video = self.single_record_video_var.get()
 
         # Get try to win option
-        try_to_win = getattr(self, 'try_to_win_var', None)
-        if try_to_win is None:
-            try_to_win = True
-        else:
-            try_to_win = try_to_win.get()
+        try_to_win = self.single_try_to_win_var.get()
 
-        # Run in separate thread
-        thread = threading.Thread(target=demo_single_model,
-                                 args=(model_path, metadata, grid_size, render_delay, True, show_ray_lines, record_video, try_to_win),
-                                 daemon=True)
-        thread.start()
+        # Get simulation mode option
+        simulate_mode = self.single_simulate_mode_var.get()
+
+        # If simulation mode, run simulation instead of demo
+        if simulate_mode:
+            try:
+                max_games = int(self.single_max_games_var.get())
+            except ValueError:
+                messagebox.showerror("Invalid Settings", "Please enter a valid number for max games.")
+                return
+
+            self.log(f"Starting simulation mode: {filename}")
+            self.log(f"Will simulate up to {max_games} games to find a win...")
+
+            # Run simulation in separate thread
+            def run_simulation():
+                replay_path = simulate_and_save_win(
+                    model_path, metadata, grid_size, max_games,
+                    state_size=None, use_pixel_state=None, output_dir=None
+                )
+                if replay_path:
+                    self.log(f"Winning game found and saved: {replay_path.name}")
+                    self.log("You can replay it using the 'Replay Game' option.")
+                else:
+                    self.log(f"No winning game found after {max_games} simulations.")
+
+            thread = threading.Thread(target=run_simulation, daemon=True)
+            thread.start()
+        else:
+            # Run in separate thread
+            thread = threading.Thread(target=demo_single_model,
+                                     args=(model_path, metadata, grid_size, render_delay, True, show_ray_lines, record_video, try_to_win),
+                                     daemon=True)
+            thread.start()
 
     def start_pvp_demo(self):
         # Get selected models from dropdowns
@@ -1048,8 +1437,8 @@ class DemoGUI:
 
         # Get settings
         try:
-            grid_size = int(self.grid_size_var.get())
-            fps = int(self.fps_var.get())
+            grid_size = int(self.pvp_grid_size_var.get())
+            fps = int(self.pvp_fps_var.get())
             # Ensure minimum delay to prevent freezing (at least 1 FPS = delay of 1)
             render_delay = fps if fps > 0 else 1
         except ValueError:
@@ -1062,6 +1451,44 @@ class DemoGUI:
         # Run in separate thread
         thread = threading.Thread(target=demo_pvp_models,
                                  args=(selected_models, selected_metadata, grid_size, num_snakes, render_delay, True),
+                                 daemon=True)
+        thread.start()
+
+    def replay_saved_game(self):
+        """Open file dialog to select and replay a saved game."""
+        from tkinter import filedialog
+
+        replay_path = filedialog.askopenfilename(
+            title="Select Replay File",
+            initialdir=str(self.replays_dir),
+            filetypes=[("Pickle files", "*.pkl"), ("All files", "*.*")]
+        )
+
+        if not replay_path:
+            return
+
+        replay_path = Path(replay_path)
+
+        if not replay_path.exists():
+            messagebox.showerror("Error", f"Replay file not found: {replay_path}")
+            return
+
+        # Get settings
+        try:
+            fps = int(self.single_fps_var.get())
+            render_delay = fps if fps > 0 else 0
+        except ValueError:
+            messagebox.showerror("Invalid Settings", "Please enter valid numbers for settings.")
+            return
+
+        show_ray_lines = self.single_show_ray_lines_var.get()
+
+        self.log(f"Replaying game: {replay_path.name}")
+        self.log("Game window will open. Close it when done.")
+
+        # Run in separate thread
+        thread = threading.Thread(target=replay_game,
+                                 args=(replay_path, render_delay, show_ray_lines),
                                  daemon=True)
         thread.start()
 
