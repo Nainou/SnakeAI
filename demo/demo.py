@@ -865,6 +865,10 @@ def demo_pvp_models(model_paths: list, metadata_list: list,
             if event.type == pygame.QUIT:
                 game.close()
                 return
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:  # Left click
+                    mouse_x, mouse_y = event.pos
+                    game.handle_mouse_click(mouse_x, mouse_y)
 
         # Continue game logic if not finished
         if not game_finished and not game.done:

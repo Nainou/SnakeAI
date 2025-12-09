@@ -606,40 +606,44 @@ class SnakeGamePvP:
         # Get scores for all snakes
         return {s.snake_id: s.score for s in self.snakes}
 
+    def handle_mouse_click(self, mouse_x, mouse_y):
+        # Handle mouse click for selecting snakes
+        # Check if click is on a snake name (in the game area)
+        if mouse_x < self.game_width:
+            y_offset = 10
+            for snake in self.snakes:
+                # Use the same dimensions as the actual text background
+                # The background is drawn at (6, y_offset) with size (text_width + 16, text_height + 8)
+                text_width, text_height = self.score_font.size(f"Snake {snake.snake_id}: {snake.score}")
+                text_rect = pygame.Rect(6, y_offset, text_width + 16, text_height + 8)
+                if text_rect.collidepoint(mouse_x, mouse_y):
+                    # Toggle selection
+                    if self.selected_snake_id == snake.snake_id:
+                        self.selected_snake_id = None
+                    else:
+                        self.selected_snake_id = snake.snake_id
+                        # Get current state and activations
+                        if snake.alive and snake.network is not None:
+                            other_snakes = [s for s in self.snakes if s.snake_id != snake.snake_id]
+                            state = snake.get_state(self.food_position, other_snakes)
+                            action, activations = snake.act(state, return_activations=True)
+                            self.last_state = state
+                            self.last_activations = activations
+                            self.last_action = action
+                    return True
+                y_offset += 35
+        return False
+
     def render(self):
         # Render the game using pygame if display is enabled
         if not self.display:
             return
 
-        # Handle pygame events
+        # Handle pygame events (only QUIT here, mouse clicks handled in demo loop)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.done = True
                 return
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:  # Left click
-                    mouse_x, mouse_y = event.pos
-                    # Check if click is on a snake name (in the game area)
-                    if mouse_x < self.game_width:
-                        y_offset = 10
-                        for snake in self.snakes:
-                            text_rect = pygame.Rect(6, y_offset, 200, 35)
-                            if text_rect.collidepoint(mouse_x, mouse_y):
-                                # Toggle selection
-                                if self.selected_snake_id == snake.snake_id:
-                                    self.selected_snake_id = None
-                                else:
-                                    self.selected_snake_id = snake.snake_id
-                                    # Get current state and activations
-                                    if snake.alive and snake.network is not None:
-                                        other_snakes = [s for s in self.snakes if s.snake_id != snake.snake_id]
-                                        state = snake.get_state(self.food_position, other_snakes)
-                                        action, activations = snake.act(state, return_activations=True)
-                                        self.last_state = state
-                                        self.last_activations = activations
-                                        self.last_action = action
-                                break
-                            y_offset += 35
 
         # Render game on left surface
         self.game_surface.fill(self.WHITE)
